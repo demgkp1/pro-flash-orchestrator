@@ -1,0 +1,7 @@
+# runtime state: mode.json, decisions.jsonl, per-conversation session counters
+.state/
+node_modules/
+*.log
+*.tmpdir
+.*.tmp*
+

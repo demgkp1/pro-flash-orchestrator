@@ -1,0 +1,67 @@
+{
+  "pro-role-injection": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node ./scripts/session-start.mjs",
+        "timeout": 5
+      }
+    ]
+  },
+  "pro-drift-nudge": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node ./scripts/pre-invocation.mjs",
+        "timeout": 5
+      }
+    ]
+  },
+  "pro-subagent-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "invoke_subagent|define_subagent|send_message",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./scripts/guard-subagent.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "pro-read-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "read_file|view_file|view_content_chunk",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./scripts/guard-read-file.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "pro-command-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./scripts/guard-command.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "pro-flash-orchestrator",
+  "displayName": "Pro Architect + Flash Worker (v3.3.0)",
+  "version": "3.3.0",
+  "description": "v3.3.0 极致节流与主动分流工作流：Pro 亲自操刀后端架构、核心算法、学术推导、前端审美与 3D/游戏视觉；Hook 物理守门负责 pro 降级、汇报契约注入、递归拦截、大文件切片与命令泄洪。含影子模式、决策日志、doctor 自检与 report 复盘。",
+  "logo": "assets/logo.svg",
+  "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
+  "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",
+  "suggestedPrompts": [
+    "/flash-dev 开发一套后端系统服务（用户认证/订单处理/支付），由你设计数据库Schema、DDD分层与核心标杆Service，同轮并发派发 Flash 扩写其余CRUD、DTO校验与集成测试",
+    "/flash-dev 帮我完成计算机视觉/机器学习大作业，由你规划模型架构与算法原理，同轮派发 Flash-Lite 提取作业文档、Flash 编写训练与评测代码",
+    "/flash-dev 帮我设计并制作一个高审美网页，由你亲自构建视觉基调与核心组件，同轮并发派给 Flash 完成其余逻辑与模块扩写"
+  ]
+}
