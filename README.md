@@ -55,29 +55,41 @@ flowchart TD
 
 ---
 
-## 🚀 Quick Start & Installation
+## 🚀 One-Line Installation
+
+Simply clone directly into Antigravity's global plugin directory with a single command—no intermediate folders or setup scripts needed:
 
 ### Windows (PowerShell)
 ```powershell
-# 1. Clone into any local directory (e.g. D:\tools or ~/tools)
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git D:\tools\pro-flash-orchestrator
-cd D:\tools\pro-flash-orchestrator
-
-# 2. Run installer (creates a Directory Junction into Antigravity, no admin rights required)
-.\install.ps1
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git "$HOME\.gemini\config\plugins\pro-flash-orchestrator"
 ```
 
 ### macOS / Linux (bash / zsh)
 ```bash
-# 1. Clone into any local directory
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/tools/pro-flash-orchestrator
-cd ~/tools/pro-flash-orchestrator
-
-# 2. Run installer (creates a symlink into Antigravity)
-chmod +x ./install.sh && ./install.sh
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/.gemini/config/plugins/pro-flash-orchestrator
 ```
 
-> **Note**: The installer only creates a link (Junction / Symlink) in `~/.gemini/config/plugins/`. It consumes virtually zero additional disk space. You can update anytime simply by running `git pull` in the repository directory.
+> **Updating**: To update to the latest version in the future, simply run:
+> ```bash
+> cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
+> ```
+
+<details>
+<summary>🛠️ Developer Mode (Linking from a custom workspace)</summary>
+
+If you want to develop and hack on the plugin from your own repository workspace (e.g. `~/workspace/pro-flash-orchestrator`) and link it to Antigravity:
+
+- **Windows**:
+  ```powershell
+  cd <your-workspace-dir>
+  .\install.ps1
+  ```
+- **macOS / Linux**:
+  ```bash
+  cd <your-workspace-dir>
+  chmod +x ./install.sh && ./install.sh
+  ```
+</details>
 
 ---
 

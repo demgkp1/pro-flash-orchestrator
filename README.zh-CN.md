@@ -55,29 +55,41 @@ flowchart TD
 
 ---
 
-## 🚀 快速安装
+## 🚀 一键快速安装
+
+推荐直接克隆至 Antigravity 插件目录，一条命令即刻完成安装，无需额外创建中间文件夹或脚本挂载：
 
 ### Windows (PowerShell)
 ```powershell
-# 1. 克隆到本地任意目录（例如 D:\tools 或 ~/tools）
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git D:\tools\pro-flash-orchestrator
-cd D:\tools\pro-flash-orchestrator
-
-# 2. 运行安装脚本（建立目录联接挂载到 Antigravity，无需管理员权限）
-.\install.ps1
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git "$HOME\.gemini\config\plugins\pro-flash-orchestrator"
 ```
 
 ### macOS / Linux (bash / zsh)
 ```bash
-# 1. 克隆到本地任意目录
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/tools/pro-flash-orchestrator
-cd ~/tools/pro-flash-orchestrator
-
-# 2. 运行安装脚本（建立符号链接挂载到 Antigravity）
-chmod +x ./install.sh && ./install.sh
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/.gemini/config/plugins/pro-flash-orchestrator
 ```
 
-> **说明**：安装脚本仅在 `~/.gemini/config/plugins/` 创建符号链接（Junction / Symlink），不占用多余存储。后续只需在仓库目录内执行 `git pull` 即可无缝升级。
+> **升级方式**：后续如需升级到最新版本，只需在终端执行：
+> ```bash
+> cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
+> ```
+
+<details>
+<summary>🛠️ 开发者模式（从自定义代码工作区通过软链接安装）</summary>
+
+如果你希望在自定义的项目工作区（如 `~/workspace/pro-flash-orchestrator`）中二次开发该插件，并将其通过目录联接挂载到 Antigravity：
+
+- **Windows**：
+  ```powershell
+  cd <你的项目目录>
+  .\install.ps1
+  ```
+- **macOS / Linux**：
+  ```bash
+  cd <你的项目目录>
+  chmod +x ./install.sh && ./install.sh
+  ```
+</details>
 
 ---
 
