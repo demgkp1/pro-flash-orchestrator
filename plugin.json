@@ -2,6 +2,7 @@
   "name": "pro-flash-orchestrator",
   "displayName": "Pro Architect + Flash Worker (v3.3.0)",
   "version": "3.3.0",
+  "license": "MIT",
   "description": "v3.3.0 极致节流与主动分流工作流：Pro 亲自操刀后端架构、核心算法、学术推导、前端审美与 3D/游戏视觉；Hook 物理守门负责 pro 降级、汇报契约注入、递归拦截、大文件切片与命令泄洪。含影子模式、决策日志、doctor 自检与 report 复盘。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
