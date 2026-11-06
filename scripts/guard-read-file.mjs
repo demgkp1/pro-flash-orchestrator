@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for  read_file / view_file / view_content_chunk  (v3.2).
+ * PreToolUse guard for  read_file / view_file / view_content_chunk  (v3.3).
  *
  * Economics that drive the thresholds:
  *   one extra model round-trip re-sends the whole conversation, while a
@@ -42,6 +42,8 @@ const CODE_HARD_LINES = 800;
 const CODE_HARD_BYTES = 40 * 1024;
 const DOC_HARD_LINES = 400;
 const DOC_HARD_BYTES = 30 * 1024;
+const DATA_HARD_LINES = 400;
+const DATA_HARD_BYTES = 30 * 1024;
 const HARD_MAX_BYTES = 5 * 1024 * 1024;
 
 const CODE_EXT = new Set([
@@ -51,6 +53,7 @@ const CODE_EXT = new Set([
   '.xml', '.gradle', '.lua', '.dart', '.ex', '.exs', '.r', '.jl', '.m', '.mm', '.sol', '.proto',
 ]);
 const DOC_EXT = new Set(['.md', '.markdown', '.mdx', '.txt', '.rst', '.adoc', '.pdf', '.doc', '.docx', '.odt', '.rtf', '.tex']);
+const DATA_EXT = new Set(['.log', '.csv', '.tsv', '.jsonl', '.ndjson', '.out']);
 
 const EXEMPT_SEGMENTS = new Set([
   'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.nuxt', '.cache', 'vendor', '__pycache__',
@@ -195,9 +198,10 @@ function decide() {
   /* unsliced read of a code file ---------------------------------------- */
   if (CODE_EXT.has(ext)) {
     if ((info.bytes || 0) > CODE_HARD_BYTES || info.lines > CODE_HARD_LINES) {
+      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
       return finish({
         deny: true,
-        reason: `【读取守门】代码文件 ${info.lines} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash_lite") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
+        reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash_lite") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
       });
     }
     if ((info.bytes || 0) > CODE_SOFT_BYTES || info.lines > CODE_SOFT_LINES) {
@@ -209,9 +213,21 @@ function decide() {
   /* unsliced read of a document ----------------------------------------- */
   if (DOC_EXT.has(ext)) {
     if ((info.bytes || 0) > DOC_HARD_BYTES || info.lines > DOC_HARD_LINES) {
+      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
       return finish({
         deny: true,
-        reason: `【读取守门】文档 ${info.lines} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash_lite") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+        reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash_lite") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+      });
+    }
+  }
+
+  /* unsliced read of a data / log file ---------------------------------- */
+  if (DATA_EXT.has(ext)) {
+    if ((info.bytes || 0) > DATA_HARD_BYTES || info.lines > DATA_HARD_LINES) {
+      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+      return finish({
+        deny: true,
+        reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash_lite") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
       });
     }
   }

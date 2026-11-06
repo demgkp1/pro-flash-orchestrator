@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v3.2) — drift detector, not a per-turn nag.
+ * PreInvocation hook (v3.3) — drift detector, not a per-turn nag.
  *
  * The old version repeated the same paragraph before every model call. That is
  * quadratic: N copies live in the trajectory and are re-sent on every later
@@ -31,8 +31,7 @@ const NAG_COOLDOWN = 6; // invocations between two drift nudges
 const WARN_COOLDOWN = 10; // invocations between two compaction warnings
 const PRESSURE_BYTES = 4 * 1024 * 1024;
 const TAIL_BYTES = 512 * 1024;
-const WRITE_PATTERN = /"(?:write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
-const DISPATCH_PATTERN = /"invoke_subagent"/g;
+const WRITE_PATTERN = /"(?:write_file|write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
 
 const payload = readPayload();
 setContext(payload);
@@ -66,9 +65,8 @@ if (mode === 'off' || isSubAgent(payload)) {
       const lastDispatch = joined.lastIndexOf('"invoke_subagent"');
       const window = lastDispatch >= 0 ? joined.slice(lastDispatch + '"invoke_subagent"'.length) : joined;
       const writes = (window.match(WRITE_PATTERN) || []).length;
-      const dispatches = (window.match(DISPATCH_PATTERN) || []).length;
       const cooled = invocationNum - Number(state.lastNagInvocation || -999) >= NAG_COOLDOWN;
-      if (writes >= 4 && dispatches === 0 && cooled) {
+      if (writes >= 4 && cooled) {
         state.lastNagInvocation = invocationNum;
         steps.push({
           ephemeralMessage: `[Pro] 自上次派单以来你已连续 ${writes} 次直接改文件。机械部分请外派 invoke_subagent(TypeName="self", Model="flash")，你只保留架构与审核。`,

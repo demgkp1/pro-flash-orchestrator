@@ -12,6 +12,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { isSubAgent } from './lib.mjs';
+import { loadDecisions } from './report.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = path.dirname(SCRIPT_DIR);
@@ -117,6 +118,11 @@ check('SessionStart：子代理不再被注入 Pro 角色', () => {
   assert(!out.injectSteps, 'sub-agent should get no role injection');
 });
 
+check('SessionStart：shadow 模式下 session-start 不注入卡片', () => {
+  const out = runHook('session-start.mjs', basePayload(), { PRO_MODE: 'shadow' });
+  assert(!out.injectSteps, `shadow mode must not inject steps, got ${JSON.stringify(out)}`);
+});
+
 check('isSubAgent：真实 transcript（首行 SYSTEM）在无 parentConversationId 时识别为子代理', () => {
   fs.mkdirSync(TMP, { recursive: true });
   const subTranscript = path.join(TMP, 'doctor-sub-transcript.jsonl');
@@ -135,6 +141,34 @@ check('isSubAgent：真实 transcript（首行 SYSTEM）在无 parentConversatio
   assert(isSubAgent({ lastUserInput: '[ARGON-CONTRACT] 帮我实现' }), 'lastUserInput with ARGON-CONTRACT should be recognized as sub-agent');
   assert(isSubAgent({ lastUserInput: '[FLASH-WORKER] 帮我修复' }), 'lastUserInput with FLASH-WORKER should be recognized as sub-agent');
   assert(!isSubAgent({ lastUserInput: '普通用户请求' }), 'normal user request should not be sub-agent');
+});
+
+check('isSubAgent：SYSTEM_SDK 紧跟 [Message] 的子代理转录识别通过', () => {
+  const subSdkTranscript = path.join(TMP, 'doctor-sub-sdk-transcript.jsonl');
+  const lines = [
+    JSON.stringify({ step_index: 0, source: 'SYSTEM_SDK', type: 'SYSTEM_EVENT', content: 'Session initialized' }),
+    JSON.stringify({
+      step_index: 1,
+      source: 'SYSTEM',
+      type: 'USER_INPUT',
+      content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-11-06T09:52:36Z sender=parent priority=MESSAGE_PRIORITY_HIGH content=[FLASH-WORKER] 测试\n</SYSTEM_MESSAGE>',
+    }),
+  ];
+  fs.writeFileSync(subSdkTranscript, `${lines.join('\n')}\n`, 'utf8');
+  assert(isSubAgent({ transcriptPath: subSdkTranscript }), 'transcript with SYSTEM_SDK followed by SYSTEM [Message] should be recognized as sub-agent');
+});
+
+check('isSubAgent：首行 3KB 且含 "sender="、"[Message]" 的主会话转录不被误判为子代理', () => {
+  const bigMainTranscript = path.join(TMP, 'doctor-big-main-transcript.jsonl');
+  const padding = 'x'.repeat(3000);
+  const line = JSON.stringify({
+    step_index: 0,
+    source: 'USER_EXPLICIT',
+    type: 'USER_INPUT',
+    content: `用户输入：请帮我分析 sender=parent 和 [Message] 的用法 ${padding}`,
+  });
+  fs.writeFileSync(bigMainTranscript, `${line}\n`, 'utf8');
+  assert(!isSubAgent({ transcriptPath: bigMainTranscript }), 'first line 3KB USER_EXPLICIT must be main agent');
 });
 
 check('isSubAgent：主会话 transcript（首行 USER_EXPLICIT）即使正文含标记也不误判', () => {
@@ -202,6 +236,13 @@ check('派单守门：当前主模型已是 flash 时，subagent 不再降级', 
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'contract should still be appended');
 });
 
+check('派单守门：主模型为 flash 时，派单 Model="pro" 仍被降级', () => {
+  const payload = dispatch({ TypeName: 'self', Model: 'pro', Prompt: '实现' });
+  payload.modelName = 'Gemini 3.8 Flash (High)';
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected downgrade to flash, got ${JSON.stringify(out.overwrite)}`);
+});
+
 check('派单守门：[FORCE-PRO] 保留 pro', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: 'pro', Prompt: '[FORCE-PRO] 二审架构' }));
   assert(!out.overwrite || !out.overwrite.Model, `should not rewrite Model, got ${JSON.stringify(out.overwrite)}`);
@@ -252,6 +293,12 @@ check('派单守门：send_message 追加中立契约（不强迫写 artifact）
   const msg = String(out.overwrite && out.overwrite.Message);
   assert(msg.includes('保持紧凑回报（禁止大段粘贴源码）：工程实现按四列表格回报，调研任务直接回复结构化要点。'), 'neutral contract missing');
   assert(!msg.includes('<task>.report.md'), 'should not force artifact file on follow-up message');
+});
+
+check('派单守门：send_message 给 Recipient: "user" 不追加契约', () => {
+  const payload = basePayload({ toolCall: { name: 'send_message', args: { Recipient: 'user', Message: '这是给用户的回复' } } });
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.decision === 'allow' && !out.overwrite, `expected allow without rewrite, got ${JSON.stringify(out)}`);
 });
 
 /* --------------------------------------------------------------- read guard */
@@ -326,6 +373,8 @@ check('读取守门：Rust target 目录不受管', () => {
   assert(out.decision === 'allow' && !out.overwrite, `expected allow without slice, got ${JSON.stringify(out)}`);
 });
 
+
+
 const geminiWsCode = path.join(TMP, '.gemini', 'workspace', 'big-code.js');
 fs.mkdirSync(path.dirname(geminiWsCode), { recursive: true });
 fs.writeFileSync(geminiWsCode, `${Array.from({ length: 500 }, (_, i) => `// line ${i + 1}`).join('\n')}\n`, 'utf8');
@@ -348,6 +397,13 @@ check('读取守门：正斜杠表示的 artifactDirectoryPath 下的文件被�
   });
   const out = runHook('guard-read-file.mjs', payload);
   assert(out.decision === 'allow' && !out.overwrite, `expected allow without slice, got ${JSON.stringify(out)}`);
+});
+
+check('读取守门：2MB .log 文件被拦截', () => {
+  const log2mb = path.join(TMP, 'large-app.log');
+  fs.writeFileSync(log2mb, Buffer.alloc(2 * 1024 * 1024, 0x61));
+  const out = runHook('guard-read-file.mjs', basePayload({ toolCall: { name: 'read_file', args: { AbsolutePath: log2mb } } }));
+  assert(out.decision === 'deny' && /数据\/日志文件/.test(out.reason), `expected deny for 2MB log, got ${JSON.stringify(out)}`);
 });
 
 /* ------------------------------------------------------------ command guard */
@@ -440,6 +496,24 @@ check('命令守门：Get-Content 1MB.log | Out-Null 放行', () => {
   assert(out.decision === 'allow', `expected allow, got ${JSON.stringify(out)}`);
 });
 
+check('命令守门：cat 1MB.log; echo hi | head -1 被正确拦截（复合命令逃逸测试）', () => {
+  const payload = basePayload({ toolCall: { name: 'run_command', args: { CommandLine: `cat "${bigLog}"; echo hi | head -1` } } });
+  const out = runHook('guard-command.mjs', payload);
+  assert(out.decision === 'deny', `expected deny, got ${JSON.stringify(out)}`);
+});
+
+check('命令守门：git --no-pager log 被拦截', () => {
+  const payload = basePayload({ toolCall: { name: 'run_command', args: { CommandLine: 'git --no-pager log' } } });
+  const out = runHook('guard-command.mjs', payload);
+  assert(out.decision === 'deny', `expected deny, got ${JSON.stringify(out)}`);
+});
+
+check('命令守门：wsl cat 1MB.log 被拦截', () => {
+  const payload = basePayload({ toolCall: { name: 'run_command', args: { CommandLine: `wsl cat "${bigLog}"` } } });
+  const out = runHook('guard-command.mjs', payload);
+  assert(out.decision === 'deny', `expected deny, got ${JSON.stringify(out)}`);
+});
+
 /* ------------------------------------------------------------ pre-invocation */
 check('漂移提醒：连续改文件不派单时注入一次', () => {
   const transcript = path.join(TMP, 'transcript.jsonl');
@@ -498,6 +572,39 @@ check('上下文压力：用 renderInfo 提示，不用会 panic 的 metadata', 
   const step = out.injectSteps[0].systemMessage;
   assert(step && step.renderInfo && typeof step.renderInfo.markdown === 'string', 'renderInfo markdown missing');
   assert(!step.metadata, 'metadata must not be used');
+});
+
+check('漂移提醒：write_file 连续 4 次正确触发漂移提醒', () => {
+  const transcript = path.join(TMP, 'drift-write-file.jsonl');
+  const lines = [
+    '{"toolCall":{"name":"write_file"}}',
+    '{"toolCall":{"name":"write_file"}}',
+    '{"toolCall":{"name":"write_file"}}',
+    '{"toolCall":{"name":"write_file"}}',
+  ];
+  fs.writeFileSync(transcript, `${lines.join('\n')}\n`, 'utf8');
+  const out = runHook('pre-invocation.mjs', basePayload({ conversationId: 'doctor-drift-wf', invocationNum: 10, transcriptPath: transcript }));
+  assert(Array.isArray(out.injectSteps) && out.injectSteps.length === 1, `expected 1 step, got ${JSON.stringify(out)}`);
+  assert(String(out.injectSteps[0].ephemeralMessage).includes('invoke_subagent'), 'nudge text missing');
+});
+
+/* ------------------------------------------------------------------ report */
+check('决策复盘：report.mjs 能正确解析 decisions.1.jsonl 与归档日志', () => {
+  const testStateDir = path.join(TMP, 'test-state');
+  fs.mkdirSync(testStateDir, { recursive: true });
+  const nowIso = new Date().toISOString();
+  const rec1 = { ts: nowIso, conv: 'c1', hook: 'guard-read-file', action: 'slice', base: 'a.js', lines: 500 };
+  const rec2 = { ts: nowIso, conv: 'c2', hook: 'guard-subagent', action: 'rewrite', from: 'pro', to: 'flash' };
+  const rec3 = { ts: nowIso, conv: 'c3', hook: 'guard-command', action: 'deny', command: 'git log' };
+
+  fs.writeFileSync(path.join(testStateDir, 'decisions.jsonl'), `${JSON.stringify(rec1)}\n`, 'utf8');
+  fs.writeFileSync(path.join(testStateDir, 'decisions.1.jsonl'), `${JSON.stringify(rec2)}\n`, 'utf8');
+  fs.writeFileSync(path.join(testStateDir, 'decisions.archive-2026-11-06.jsonl'), `${JSON.stringify(rec3)}\n`, 'utf8');
+
+  const parsed = loadDecisions(testStateDir, Date.now() - 3600000);
+  assert(parsed.length === 3, `expected 3 parsed decisions, got ${parsed.length}`);
+  const actions = new Set(parsed.map((p) => p.action));
+  assert(actions.has('slice') && actions.has('rewrite') && actions.has('deny'), 'missing expected actions from rotated/archived files');
 });
 
 /* -------------------------------------------------------------------- done */

@@ -22,7 +22,7 @@
 
 ## 4. 工具与参数（本机 build）
 - 读：`view_file(AbsolutePath=..., StartLine=..., EndLine=...)`（`read_file` 同族）
-- 写：`write_to_file`、`edit_file`、`multi_replace_file_content`
+- 写：`write_file`、`edit_file`、`replace_file_content`
 - 查：`grep_search`、`find_by_name`、`list_dir`；跑：`run_command`
 - 派单：`invoke_subagent(TypeName="self"|"research", Model="flash"|"flash_lite", Prompt=...)`
 - 续派：`send_message(Recipient=<conversationId>, Message=...)`

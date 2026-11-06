@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for `invoke_subagent` / `define_subagent` / `send_message` (v3.2).
+ * PreToolUse guard for `invoke_subagent` / `define_subagent` / `send_message` (v3.3).
  *
  * 1. recursion  — a sub-agent may not dispatch another sub-agent (hard deny).
  * 2. model leak — `Model` missing / "inherit" / "pro" is rewritten to
@@ -91,8 +91,12 @@ function decide() {
     const isCurrentModelFlash = currentModel.includes('flash');
     const target = typeName === 'research' ? 'flash_lite' : 'flash';
 
-    if (!forced && !isCurrentModelFlash && !CHEAP_MODELS.has(lower)) {
-      overwrite.Model = target;
+    if (!forced) {
+      if (lower === 'pro') {
+        overwrite.Model = target;
+      } else if (!isCurrentModelFlash && !CHEAP_MODELS.has(lower)) {
+        overwrite.Model = target;
+      }
     }
 
     const nextPrompt = promptKey ? appendContract(prompt, contractFor(typeName, payload)) : null;
@@ -119,12 +123,15 @@ function decide() {
 
   /* follow-up work sent to an existing sub-agent: re-assert the contract */
   if (tool === SEND) {
+    const recipient = clean(args.Recipient || args.recipient).toLowerCase();
+    if (recipient === 'user') return ALLOW;
+
     const key = typeof args.Message === 'string' ? 'Message' : typeof args.message === 'string' ? 'message' : null;
     if (!key) return ALLOW;
     const message = String(args[key]);
     if (message.includes(CONTRACT_MARKER) || message.includes(LEGACY_CONTRACT_MARKER)) return ALLOW;
     const reminder = `${CONTRACT_MARKER} 保持紧凑回报（禁止大段粘贴源码）：工程实现按四列表格回报，调研任务直接回复结构化要点。`;
-    logDecision({ hook: 'guard-subagent', tool, action: 'contract', mode, key });
+    logDecision({ hook: 'guard-subagent', tool, action: 'contract', mode, key, recipient });
     return { decision: 'allow', overwrite: { [key]: `${message.replace(/\s+$/, '')}\n\n${reminder}` } };
   }
 

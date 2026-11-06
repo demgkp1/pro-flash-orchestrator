@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for `run_command` (v3.2).
+ * PreToolUse guard for `run_command` (v3.3).
  *
  * `cat requirements.md` bypasses the read guard entirely, so the same flood has
  * to be closed at the shell. The blacklist is deliberately narrow and
@@ -27,7 +27,7 @@ const BOUNDED_TAIL = /\|\s*(head|tail)\b|\|\s*Select-Object\s+-First|\|\s*Out-St
 const BOUNDED_FLAG = /(^|\s)-(TotalCount|Tail|First|Last|Head)\b/i;
 const SAFE_SINK_PIPE = /\|\s*(?:Set-Content|Add-Content|sc|ac|Out-File|Out-Null)\b/i;
 const REDIRECT_TARGET = /(?<!2)(?:1?>>|1?>|&>)\s*(?!&[12]\b)(?:["'][^"']+["']|\$null\b|\/dev\/null\b|NUL\b|[^\s|;&<>]+)/i;
-const GIT_LOG = /(^|[;&|]\s*)git\s+log\b/i;
+const GIT_LOG = /(?:^|[;&|]\s*)git\b(?:\s+(?:-[^\s]+(?:\s+[^\s-;|<>&]+)?))*\s+log\b/i;
 const GIT_LOG_BOUND = /(-n\s*\d+|--max-count|-n\d+|\s-\d+\b|--oneline\s+-n)/i;
 
 function unquote(value) {
@@ -109,6 +109,14 @@ export function unwrapCommand(command) {
       continue;
     }
 
+    // wsl direct command: wsl cat ... or wsl -- cat ...
+    const wslMatch = cmd.match(/^wsl(?:\.exe)?\s+(?:--\s+)?([\s\S]+)$/i);
+    if (wslMatch) {
+      cmd = stripOuterQuotes(wslMatch[1]);
+      changed = true;
+      continue;
+    }
+
     // powershell / pwsh with explicit -Command or -c
     const pwshWithFlag = /^(?:(?:[^\s"']*[\/\\\\])?(?:powershell(?:\.exe)?|pwsh(?:\.exe)?))\s+[\s\S]*?-(?:Command|c)\s+([\s\S]+)$/i;
     const pwshFlagMatch = cmd.match(pwshWithFlag);
@@ -175,6 +183,67 @@ function extractDumpTarget(command) {
   return null;
 }
 
+export function splitTopLevelPipelines(command) {
+  const pipelines = [];
+  let current = '';
+  let inSingle = false;
+  let inDouble = false;
+  let escape = false;
+
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (escape) {
+      current += ch;
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && !inSingle) {
+      escape = true;
+      current += ch;
+      continue;
+    }
+    if (ch === "'" && !inDouble) {
+      inSingle = !inSingle;
+      current += ch;
+      continue;
+    }
+    if (ch === '"' && !inSingle) {
+      inDouble = !inDouble;
+      current += ch;
+      continue;
+    }
+    if (!inSingle && !inDouble) {
+      if ((ch === '&' && command[i + 1] === '&') || (ch === '|' && command[i + 1] === '|')) {
+        if (current.trim()) pipelines.push(current.trim());
+        current = '';
+        i += 1;
+        continue;
+      }
+      if (ch === ';' || ch === '\n') {
+        if (current.trim()) pipelines.push(current.trim());
+        current = '';
+        continue;
+      }
+    }
+    current += ch;
+  }
+  if (current.trim()) pipelines.push(current.trim());
+  return pipelines.length > 0 ? pipelines : [command.trim()];
+}
+
+export function getSubPipelines(command) {
+  const topPipelines = splitTopLevelPipelines(command);
+  const result = [];
+  for (const p of topPipelines) {
+    const unwrapped = unwrapCommand(p);
+    const sub = splitTopLevelPipelines(unwrapped);
+    for (const s of sub) {
+      result.push(s);
+    }
+  }
+  return result.length > 0 ? result : [command.trim()];
+}
+
 function decide() {
   const payload = readPayload();
   setContext(payload);
@@ -189,8 +258,6 @@ function decide() {
   const command = String(args.CommandLine || args.Command || args.command || '');
   if (!command.trim()) return ALLOW;
 
-  const effectiveCommand = unwrapCommand(command);
-
   const deny = (rule, reason) => {
     logDecision({
       hook: 'guard-command',
@@ -203,42 +270,47 @@ function decide() {
     return mode === 'shadow' ? ALLOW : { decision: 'deny', reason };
   };
 
-  /* bounded or safely sunk pipelines are fine ---------------------------- */
-  if (
-    BOUNDED_TAIL.test(command) ||
-    BOUNDED_TAIL.test(effectiveCommand) ||
-    SAFE_SINK_PIPE.test(command) ||
-    SAFE_SINK_PIPE.test(effectiveCommand)
-  ) {
-    logDecision({ hook: 'guard-command', tool, mode, action: 'pass', rule: 'bounded', command: command.slice(0, 200) });
-    return ALLOW;
-  }
+  const pipelines = getSubPipelines(command);
 
-  /* unbounded file dump -------------------------------------------------- */
-  const dump = extractDumpTarget(effectiveCommand);
-  if (dump && dump.rawPath && !BOUNDED_FLAG.test(effectiveCommand) && !BOUNDED_FLAG.test(command)) {
-    const target = resolvePath(dump.rawPath, payload);
-    try {
-      const size = fs.statSync(target).size;
-      if (size > DUMP_BYTES) {
-        return deny(
-          'dump',
-          `【命令守门】\`${dump.reader}\` 会把 ${(size / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash_lite 提取要点。`,
-        );
-      }
-    } catch {
-      /* unknown path: let the command fail on its own */
+  for (const pipe of pipelines) {
+    const effPipe = unwrapCommand(pipe);
+
+    /* bounded or safely sunk pipelines are fine ---------------------------- */
+    if (
+      BOUNDED_TAIL.test(pipe) ||
+      BOUNDED_TAIL.test(effPipe) ||
+      SAFE_SINK_PIPE.test(pipe) ||
+      SAFE_SINK_PIPE.test(effPipe)
+    ) {
+      continue;
     }
-  }
 
-  /* unbounded git log ---------------------------------------------------- */
-  if (GIT_LOG.test(effectiveCommand) && !GIT_LOG_BOUND.test(effectiveCommand)) {
-    const gitMatch = effectiveCommand.match(GIT_LOG);
-    const rest = effectiveCommand.slice(gitMatch.index + gitMatch[0].length);
-    const stmtMatch = rest.match(/^(?:(?![;&]|&&|\|\|)[\s\S])*/);
-    const gitStmt = stmtMatch ? stmtMatch[0] : rest;
-    if (!SAFE_SINK_PIPE.test(gitStmt) && !REDIRECT_TARGET.test(gitStmt)) {
-      return deny('git-log', '【命令守门】无界 `git log` 会输出全部提交。请加 `-n 20 --oneline`，或只看 `git log -n 5 --stat`。');
+    /* unbounded file dump -------------------------------------------------- */
+    const dump = extractDumpTarget(effPipe);
+    if (dump && dump.rawPath && !BOUNDED_FLAG.test(effPipe) && !BOUNDED_FLAG.test(pipe)) {
+      const target = resolvePath(dump.rawPath, payload);
+      try {
+        const size = fs.statSync(target).size;
+        if (size > DUMP_BYTES) {
+          return deny(
+            'dump',
+            `【命令守门】\`${dump.reader}\` 会把 ${(size / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash_lite 提取要点。`,
+          );
+        }
+      } catch {
+        /* unknown path: let the command fail on its own */
+      }
+    }
+
+    /* unbounded git log ---------------------------------------------------- */
+    if (GIT_LOG.test(effPipe) && !GIT_LOG_BOUND.test(effPipe)) {
+      const gitMatch = effPipe.match(GIT_LOG);
+      const rest = effPipe.slice(gitMatch.index + gitMatch[0].length);
+      const stmtMatch = rest.match(/^(?:(?![;&]|&&|\|\|)[\s\S])*/);
+      const gitStmt = stmtMatch ? stmtMatch[0] : rest;
+      if (!SAFE_SINK_PIPE.test(gitStmt) && !REDIRECT_TARGET.test(gitStmt)) {
+        return deny('git-log', '【命令守门】无界 `git log` 会输出全部提交。请加 `-n 20 --oneline`，或只看 `git log -n 5 --stat`。');
+      }
     }
   }
 

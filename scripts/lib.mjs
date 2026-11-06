@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Shared helpers for argon-flash-orchestrator hooks (v3.2).
+ * Shared helpers for pro-flash-orchestrator hooks (v3.3).
  *
  * Design rules:
  *  - Never throw into the caller: every helper is exception-safe, so a hook can
@@ -71,8 +71,8 @@ function transcriptVerdict(rawPath) {
     const fd = fs.openSync(rawPath, 'r');
     let text;
     try {
-      const buf = Buffer.alloc(2048);
-      const bytesRead = fs.readSync(fd, buf, 0, 2048, 0);
+      const buf = Buffer.alloc(65536);
+      const bytesRead = fs.readSync(fd, buf, 0, 65536, 0);
       text = buf.toString('utf8', 0, bytesRead);
     } finally {
       try {
@@ -82,26 +82,52 @@ function transcriptVerdict(rawPath) {
       }
     }
 
-    const firstLine = text.split(/\r?\n/)[0] || '';
-    try {
-      const step = JSON.parse(firstLine);
-      if (step && typeof step === 'object') {
-        if (step.source !== 'SYSTEM') return false; // normal user step -> main agent
-        const content = typeof step.content === 'string' ? step.content : JSON.stringify(step.content || '');
-        return (
-          content.includes('[Message]') ||
-          content.includes('sender=') ||
-          content.includes('[FLASH-WORKER]') ||
-          content.includes('[PRO-CONTRACT]') ||
-          content.includes('[ARGON-CONTRACT]')
-        );
+    if (!text.trim()) return null;
+
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    let parsedAnyStep = false;
+
+    for (let i = 0; i < Math.min(lines.length, 10); i += 1) {
+      let step = null;
+      try {
+        step = JSON.parse(lines[i]);
+      } catch {
+        const srcMatch = lines[i].match(/"source"\s*:\s*"([^"]+)"/);
+        if (srcMatch) {
+          step = { source: srcMatch[1], content: '' };
+        }
       }
-    } catch {
-      /* truncated first line: fall through to the text heuristics */
+
+      if (step && typeof step === 'object') {
+        parsedAnyStep = true;
+        const source = String(step.source || '');
+        if (source === 'USER_EXPLICIT' || source === 'USER_INPUT') {
+          return false;
+        }
+        if (source === 'SYSTEM_SDK') {
+          continue;
+        }
+        if (source === 'SYSTEM') {
+          const content = typeof step.content === 'string' ? step.content : JSON.stringify(step.content || '');
+          if (
+            content.includes('[Message]') ||
+            content.includes('sender=') ||
+            content.includes('[FLASH-WORKER]') ||
+            content.includes('[PRO-CONTRACT]') ||
+            content.includes('[ARGON-CONTRACT]')
+          ) {
+            return true;
+          }
+        }
+      }
     }
 
-    if (/"source"\s*:\s*"SYSTEM"/i.test(text)) return true;
-    if (text.includes('[Message]') || text.includes('sender=')) return true;
+    if (!parsedAnyStep) {
+      if (text.includes('<SYSTEM_MESSAGE>') && (text.includes('[Message]') || text.includes('sender='))) {
+        return true;
+      }
+    }
+
     return false;
   } catch {
     return null;
@@ -150,6 +176,21 @@ export function currentMode() {
 export function ensureStateDir() {
   try {
     fs.mkdirSync(SESSION_DIR, { recursive: true });
+    const now = Date.now();
+    const maxAgeMs = 14 * 24 * 60 * 60 * 1000;
+    const files = fs.readdirSync(SESSION_DIR);
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const fullPath = path.join(SESSION_DIR, file);
+      try {
+        const st = fs.statSync(fullPath);
+        if (now - st.mtimeMs > maxAgeMs) {
+          fs.unlinkSync(fullPath);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
   } catch {
     /* read-only install: logging becomes a no-op */
   }
@@ -220,7 +261,8 @@ export function fileInfo(file) {
     for (let i = 0; i < buf.length; i += 1) if (buf[i] === 10) lines += 1;
     if (buf.length > 0 && buf[buf.length - 1] !== 10) lines += 1;
     const truncated = st.size > cap;
-    return { exists: true, bytes: st.size, lines: truncated ? 100000 : lines, truncated };
+    const estimatedLines = truncated ? Math.round(st.size / 35) : lines;
+    return { exists: true, bytes: st.size, lines: estimatedLines, truncated };
   } catch {
     return { exists: false };
   }
@@ -246,7 +288,11 @@ export function readTail(file, maxBytes = 512 * 1024) {
 const WINDOWS_ABS = /^[a-zA-Z]:[\\/]/;
 
 export function resolvePath(raw, payload) {
-  let p = String(raw || '').trim();
+  let p = String(raw || '')
+    .trim()
+    .replace(/^\\?["'`]+|\\?["'`]+$/g, '')
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .trim();
   if (!p) return '';
   if (p.toLowerCase().startsWith('file:')) {
     p = p.replace(/^file:\/{2,3}/i, '');

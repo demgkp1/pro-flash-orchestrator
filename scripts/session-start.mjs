@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v3.2)
+ * SessionStart hook (v3.3)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -31,6 +31,9 @@ setContext(payload);
 const mode = currentMode();
 
 if (mode === 'off') {
+  output({});
+} else if (mode === 'shadow') {
+  logDecision({ hook: 'session-start', action: 'shadow-pass', mode });
   output({});
 } else if (isSubAgent(payload)) {
   // A sub-agent must not be re-branded as the architect.
