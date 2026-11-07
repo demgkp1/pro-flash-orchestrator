@@ -1,19 +1,19 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.3「Pro 主控架构师 + Flash/Flash-Lite 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration to flash_lite and mechanical implementation/testing to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.3.2「Pro 主控架构师 + Flash/Flash-Lite 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration to flash_lite and mechanical implementation/testing to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.3)：主创把关 + 额度节流全场景通用工作流
+# `/flash-dev` (v0.3.2)：主创把关 + 额度节流全场景通用工作流
 
-> 汇报契约、模型降级、递归拦截、大文件切片都由 Hook 兜底，**不需要在 Prompt 里手写契约**。本技能只负责“什么时候派、派给谁、给什么料、怎么验收”。
+> 汇报契约、模型降级、递归与轮询阻断、写入守门、大代码切片与多文件防连读都由 Hook 物理守门，**不需要在 Prompt 里手写契约**。派单后请直接结束当前回合静默等待系统异步唤醒，严禁调用 `manage_subagents` 轮询。本技能只负责“什么时候派、派给谁、给什么料、怎么验收”。
 
 ## 触发准则（全场景按规模触发，不限领域）
 
 - **多文件探路 / 审查 / 排错（≥3 个文件或长文档/日志）**：
-  必须先派 `invoke_subagent(TypeName="research", Model="flash_lite")` 提取结构化摘要与关键起止行号，**严禁主模型自己连续并发调用 `read_file`/`view_file` 逐个切片探路**。
+  必须先派 `invoke_subagent(TypeName="research", Model="flash_lite")` 提取结构化摘要与关键起止行号，**严禁主模型自己连续并发调用 `read_file`/`view_file` 逐个切片探路**（连续切片连读第 4 个不同文件将被硬拦截）。
 - **多文件修改 / 批量实现 / 测试补齐（>50 行或 ≥2 个文件）**：
-  Pro 只写最关键的核心标杆或关键修复点，**在同一轮并发派发** `invoke_subagent(TypeName="self", Model="flash")` 完成外围修改与自测闭环。
+  Pro 只写最关键的核心标杆或关键修复点（≤2 个文件，直改第 3 个不同源码文件将被硬拦截），**在同一轮并发派发** `invoke_subagent(TypeName="self", Model="flash")` 完成外围修改与自测闭环。
 - **单点微调（≤50 行、≤2 个已知文件且行号明确）**：
   Pro 直接切片读取并修改，无需派单（避免派单通信开销与往返时延）。
 
@@ -109,11 +109,12 @@ Pro 亲自落盘核心接口/标杆代码/关键修补点，**并在同一轮回
 
 ### 步骤 4：切片终审（Pro Audit）
 
-1. `git status --porcelain` 看实际改动范围，防止子代理越界改文件；
-2. 按汇报的行号 `view_file(AbsolutePath, StartLine, EndLine)` 抽检 20–60 行（不重读全文）；
-3. 核心事务/算法/视觉微调 → Pro 亲自 `edit_file`；
-4. 逻辑/依赖报错 → `send_message(Recipient="<conversationId>", Message="报错原文 + 期望行为")` 打回**同一**子代理；
-5. 同一子代理连续 2 次失败 → Pro 接管该函数。
+1. 派单后直接结束当前回合，静默等待系统自动通知，严禁调用 `manage_subagents(Action="list")` 轮询或抢改；
+2. 收到完成通知后，通过 `git status --porcelain` 看实际改动范围，防止子代理越界改文件；
+3. 按汇报的行号 `view_file(AbsolutePath, StartLine, EndLine)` 抽检 20–60 行（不重读全文）；
+4. 核心事务/算法/视觉微调 → Pro 亲自 `edit_file`；
+5. 逻辑/依赖报错 → `send_message(Recipient="<conversationId>", Message="报错原文 + 期望行为")` 打回**同一**子代理；
+6. 同一子代理连续 2 次失败 → Pro 接管该函数。
 
 ## 汇报契约（由 Hook 自动追加，仅供理解）
 

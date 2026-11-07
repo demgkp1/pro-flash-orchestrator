@@ -718,6 +718,110 @@ check('决策复盘：report.mjs 能正确解析 decisions.1.jsonl 与归档日�
   assert(actions.has('slice') && actions.has('rewrite') && actions.has('deny'), 'missing expected actions from rotated/archived files');
 });
 
+/* ------------------------------------------------------------ v0.3.2 additions */
+check('派单守门：主代理调用 manage_subagents(Action="list") 轮询被拦截，Action="kill" 放行', () => {
+  const payloadList = basePayload({
+    conversationId: 'doctor-manage-test',
+    toolCall: { name: 'manage_subagents', args: { Action: 'list' } },
+  });
+  const outList = runHook('guard-subagent.mjs', payloadList);
+  assert(outList.decision === 'deny', `expected deny for list, got ${JSON.stringify(outList)}`);
+  assert(/轮询守门/.test(outList.reason), `expected 轮询守门 in reason: ${outList.reason}`);
+
+  const payloadKill = basePayload({
+    conversationId: 'doctor-manage-test',
+    toolCall: { name: 'manage_subagents', args: { Action: 'kill', TaskId: 'task-1' } },
+  });
+  const outKill = runHook('guard-subagent.mjs', payloadKill);
+  assert(outKill.decision === 'allow', `expected allow for kill, got ${JSON.stringify(outKill)}`);
+});
+
+check('读取守门：主代理连续读取同一文件的多个切片不重复计入多文件上限，读取第 4 个不同文件被拦截', () => {
+  const convId = 'doctor-read-dedup-test';
+  const f1 = writeFixture('dedup-1.js', 100);
+  const f2 = writeFixture('dedup-2.js', 100);
+  const f3 = writeFixture('dedup-3.js', 100);
+  const f4 = writeFixture('dedup-4.js', 100);
+
+  const r1a = runHook('guard-read-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'view_file', args: { AbsolutePath: f1, StartLine: 1, EndLine: 40 } },
+  }));
+  assert(r1a.decision === 'allow', 'f1 slice 1 should allow');
+
+  const r1b = runHook('guard-read-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'view_file', args: { AbsolutePath: f1, StartLine: 41, EndLine: 80 } },
+  }));
+  assert(r1b.decision === 'allow', 'f1 slice 2 should allow');
+
+  const r2 = runHook('guard-read-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'view_file', args: { AbsolutePath: f2, StartLine: 1, EndLine: 40 } },
+  }));
+  assert(r2.decision === 'allow', 'f2 should allow');
+
+  const r3 = runHook('guard-read-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'view_file', args: { AbsolutePath: f3, StartLine: 1, EndLine: 40 } },
+  }));
+  assert(r3.decision === 'allow', 'f3 should allow');
+
+  const r4 = runHook('guard-read-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'view_file', args: { AbsolutePath: f4, StartLine: 1, EndLine: 40 } },
+  }));
+  assert(r4.decision === 'deny', `expected deny on 4th distinct file, got ${JSON.stringify(r4)}`);
+  assert(/多文件连续盲读拦截/.test(r4.reason), `expected 多文件连续盲读拦截 in reason: ${r4.reason}`);
+});
+
+check('写入守门：主代理直改前 2 个不同文件放行，直改第 3 个不同文件被拦截（子代理与 Artifact 豁免）', () => {
+  const convId = 'doctor-write-guard-test';
+  const w1 = path.join(TMP, 'write-target-1.js');
+  const w2 = path.join(TMP, 'write-target-2.js');
+  const w3 = path.join(TMP, 'write-target-3.js');
+  const artFile = path.join(TMP, 'artifacts', 'doc.md');
+
+  const res1 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: w1, Content: 'export const a = 1;' } },
+  }));
+  assert(res1.decision === 'allow', `expected allow on 1st file, got ${JSON.stringify(res1)}`);
+
+  const res1Again = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'edit_file', args: { Path: w1, Target: 'a = 1', Replacement: 'a = 2' } },
+  }));
+  assert(res1Again.decision === 'allow', `expected allow on same file edit, got ${JSON.stringify(res1Again)}`);
+
+  const res2 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: w2, Content: 'export const b = 2;' } },
+  }));
+  assert(res2.decision === 'allow', `expected allow on 2nd file, got ${JSON.stringify(res2)}`);
+
+  const resArt = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: artFile, Content: '# Report' } },
+  }));
+  assert(resArt.decision === 'allow', `expected allow for artifact, got ${JSON.stringify(resArt)}`);
+
+  // Subagent write -> exempt (even on 3rd file)
+  const resSub = runHook('guard-write-file.mjs', basePayload({
+    conversationId: 'doctor-write-sub-test',
+    parentConversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: w3, Content: 'export const c = 3;' } },
+  }));
+  assert(resSub.decision === 'allow', `expected allow for subagent write, got ${JSON.stringify(resSub)}`);
+
+  const res3 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: w3, Content: 'export const c = 3;' } },
+  }));
+  assert(res3.decision === 'deny', `expected deny on 3rd distinct file, got ${JSON.stringify(res3)}`);
+  assert(/多文件连续直改拦截/.test(res3.reason), `expected 多文件连续直改拦截 in reason: ${res3.reason}`);
+});
+
 /* -------------------------------------------------------------------- done */
 try {
   fs.rmSync(TMP, { recursive: true, force: true });

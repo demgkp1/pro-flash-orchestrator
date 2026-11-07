@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v0.3) — drift detector, not a per-turn nag.
+ * PreInvocation hook (v0.3.2) — turn-boundary wake-up + deduplicated drift detector.
  *
- * The old version repeated the same paragraph before every model call. That is
- * quadratic: N copies live in the trajectory and are re-sent on every later
- * turn. This version stays silent by default and only speaks when the transcript
- * shows one of two real problems:
- *
- *   1. drift      — the agent keeps writing/editing files and never dispatches;
- *   2. pressure   — the transcript is large enough that /compact is worth it
- *                   (shown to the user only, via renderInfo).
- *
- * Both are rate-limited per conversation.
+ * Key guarantees:
+ *   1. Uses `globalStep` (transcript step_index / line count) and turn-reset
+ *      detection instead of per-turn `invocationNum`, so cooldown never locks.
+ *   2. Uses deduplicated, exempt-filtered `state.readsSinceDispatch` and
+ *      `state.writesSinceDispatch` tracked by `guard-read-file` / `guard-write-file`
+ *      (with transcript fallback for write calls), avoiding false positives when
+ *      the main agent reads two slices of the same file or reads exempt logs.
+ *   3. Injects a 1-line transient `ephemeralMessage` on new user turns once
+ *      `globalStep >= 8`, preventing attention dilution in 100+ step sessions
+ *      with zero permanent trajectory growth.
  */
 import fs from 'node:fs';
 import {
@@ -27,12 +27,13 @@ import {
   writeSession,
 } from './lib.mjs';
 
-const NAG_COOLDOWN = 6; // invocations between two drift nudges
-const WARN_COOLDOWN = 10; // invocations between two compaction warnings
+const NAG_STEP_COOLDOWN = 4; // minimum transcript steps between two drift nudges
+const WARN_STEP_COOLDOWN = 12; // minimum transcript steps between compaction warnings
+const WAKEUP_MIN_STEPS = 8; // start turn-boundary ephemeral wake-ups after early turns
 const PRESSURE_BYTES = 4 * 1024 * 1024;
 const TAIL_BYTES = 512 * 1024;
 const WRITE_TOOL_CALL_RE = /"name"\s*:\s*"(?:write_file|write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
-const DISPATCH_TOOL_CALL_RE = /"name"\s*:\s*"invoke_subagent"/;
+const DISPATCH_TOOL_CALL_RE = /"name"\s*:\s*"(?:invoke_subagent|send_message)"/;
 
 const payload = readPayload();
 setContext(payload);
@@ -48,6 +49,7 @@ if (mode === 'off' || isSubAgent(payload)) {
   const steps = [];
   const state = readSession(conversationId);
   const transcriptPath = String(payload.transcriptPath || '');
+  const userInput = lastUserInput(payload).trim();
 
   let transcriptBytes = 0;
   if (transcriptPath) {
@@ -58,24 +60,48 @@ if (mode === 'off' || isSubAgent(payload)) {
     }
   }
 
-  /* ---------------------------------------------------------- drift check */
+  /* ---------------------------------------- scan transcript tail & steps */
+  let transcriptWrites = 0;
+  let globalStep = 0;
+
   if (transcriptBytes > 0 && !isCurrentModelFlash) {
     try {
       const tail = readTail(transcriptPath, TAIL_BYTES);
       const lines = tail.split(/\r?\n/).filter(Boolean).slice(-400);
-      let writes = 0;
+      globalStep = lines.length;
+
       for (const line of lines) {
         let isPlanner = true;
         try {
           const obj = JSON.parse(line);
-          if (obj && typeof obj === 'object' && obj.source && obj.source !== 'MODEL' && obj.type !== 'PLANNER_RESPONSE') {
-            isPlanner = false;
-          }
-          if (obj && typeof obj === 'object' && Array.isArray(obj.tool_calls)) {
-            for (const tc of obj.tool_calls) {
-              const name = String((tc && tc.name) || '');
-              if (name === 'invoke_subagent') {
-                writes = 0;
+          if (obj && typeof obj === 'object') {
+            if (Number.isFinite(Number(obj.step_index))) {
+              globalStep = Math.max(globalStep, Number(obj.step_index));
+            }
+            if (obj.source && obj.source !== 'MODEL' && obj.type !== 'PLANNER_RESPONSE') {
+              isPlanner = false;
+            }
+            if (Array.isArray(obj.tool_calls) && obj.tool_calls.length > 0) {
+              for (const tc of obj.tool_calls) {
+                const name = String((tc && tc.name) || '');
+                if (name === 'invoke_subagent' || name === 'send_message') {
+                  transcriptWrites = 0;
+                } else if (
+                  name === 'write_file' ||
+                  name === 'write_to_file' ||
+                  name === 'edit_file' ||
+                  name === 'multi_replace_file_content' ||
+                  name === 'replace_file_content'
+                ) {
+                  transcriptWrites += 1;
+                }
+              }
+              continue;
+            }
+            if (obj.toolCall && typeof obj.toolCall === 'object') {
+              const name = String(obj.toolCall.name || '');
+              if (name === 'invoke_subagent' || name === 'send_message') {
+                transcriptWrites = 0;
               } else if (
                 name === 'write_file' ||
                 name === 'write_to_file' ||
@@ -83,54 +109,81 @@ if (mode === 'off' || isSubAgent(payload)) {
                 name === 'multi_replace_file_content' ||
                 name === 'replace_file_content'
               ) {
-                writes += 1;
+                transcriptWrites += 1;
               }
+              continue;
             }
-            continue;
-          }
-          if (obj && typeof obj === 'object' && obj.toolCall && typeof obj.toolCall === 'object') {
-            const name = String(obj.toolCall.name || '');
-            if (name === 'invoke_subagent') {
-              writes = 0;
-            } else if (
-              name === 'write_file' ||
-              name === 'write_to_file' ||
-              name === 'edit_file' ||
-              name === 'multi_replace_file_content' ||
-              name === 'replace_file_content'
+            if (
+              isPlanner &&
+              Array.isArray(obj.truncated_fields) &&
+              obj.truncated_fields.includes('tool_calls')
             ) {
-              writes += 1;
+              transcriptWrites += 1;
+              continue;
             }
-            continue;
           }
         } catch {
-          /* fallback for truncated JSONL lines */
+          /* fallback for partial JSONL lines */
         }
         if (!isPlanner) continue;
-        if (!line.includes('"tool_calls"') && !line.includes('"toolCall"')) continue;
-        if (DISPATCH_TOOL_CALL_RE.test(line)) {
-          writes = 0;
-        } else {
-          const matches = line.match(WRITE_TOOL_CALL_RE);
-          if (matches) writes += matches.length;
+        if (!line.includes('"tool_calls"') && !line.includes('"toolCall"') && !line.includes('"truncated_fields"')) {
+          continue;
         }
-      }
-      const cooled = invocationNum - Number(state.lastNagInvocation || -999) >= NAG_COOLDOWN;
-      if (writes >= 4 && cooled) {
-        state.lastNagInvocation = invocationNum;
-        steps.push({
-          ephemeralMessage: `[Pro] 自上次派单以来你已连续 ${writes} 次直接改文件。机械部分请外派 invoke_subagent(TypeName="self", Model="flash")，你只保留架构与审核。`,
-        });
+        if (DISPATCH_TOOL_CALL_RE.test(line)) {
+          transcriptWrites = 0;
+        } else {
+          const writeMatches = line.match(WRITE_TOOL_CALL_RE);
+          if (writeMatches) transcriptWrites += writeMatches.length;
+          else if (line.includes('"truncated_fields"') && line.includes('"tool_calls"')) transcriptWrites += 1;
+        }
       }
     } catch {
       /* unreadable transcript: stay silent */
     }
   }
 
-  /* ------------------------------------------------------- pressure check */
-  const warnCooled = invocationNum - Number(state.lastWarnInvocation || -999) >= WARN_COOLDOWN;
+  /* ------------------------------------ 1. new user turn boundary wakeup */
+  const isNewUserTurn = Boolean(userInput && userInput !== state.lastUserInput);
+  if (isNewUserTurn) {
+    state.lastUserInput = userInput;
+    state.readsSinceDispatch = [];
+    state.writesSinceDispatch = [];
+  }
+
+  // Prefer deduplicated, exempt-filtered file lists from guard-read-file / guard-write-file
+  const distinctReads = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch.length : 0;
+  const stateWrites = Array.isArray(state.writesSinceDispatch)
+    ? state.writesSinceDispatch.length
+    : Number(state.writesSinceDispatch || 0);
+  const writes = Math.max(stateWrites, transcriptWrites);
+  const reads = distinctReads;
+
+  const lastNagStep = Number(state.lastNagStep ?? -999);
+  const stepDelta = globalStep >= lastNagStep ? globalStep - lastNagStep : NAG_STEP_COOLDOWN;
+  const invReset = invocationNum > 0 && invocationNum < Number(state.lastNagInvocation || 0);
+  const cooled = stepDelta >= NAG_STEP_COOLDOWN || invReset || isNewUserTurn;
+
+  if (!isCurrentModelFlash && isNewUserTurn && globalStep >= WAKEUP_MIN_STEPS && writes < 3) {
+    state.lastNagStep = globalStep;
+    state.lastNagInvocation = invocationNum;
+    steps.push({
+      ephemeralMessage:
+        '[Pro-Flash 轮次唤醒] 新需求开始：凡需读 ≥3 个文件或跨文件排查报错，第一轮必须先派 invoke_subagent(TypeName="research", Model="flash_lite")（严禁逐个切片连读）；凡改 ≥2 个文件或 >50 行代码，必须外派 invoke_subagent(TypeName="self", Model="flash") 或 send_message 续派；派单后请直接结束回合静默等待异步通知，严禁轮询或抢改。',
+    });
+  } else if (!isCurrentModelFlash && cooled && (writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
+    /* ---------------------------------------------------- 2. mid-turn drift */
+    state.lastNagStep = globalStep;
+    state.lastNagInvocation = invocationNum;
+    steps.push({
+      ephemeralMessage: `[Pro-Flash 漂移提醒] 自上次派单以来你已直接读取 ${reads} 个不同文件、改写 ${writes} 次文件。请立即停止单刷，将检索探路派给 invoke_subagent(TypeName="research", Model="flash_lite")，将编码修改与测试派给 invoke_subagent(TypeName="self", Model="flash")（或 send_message 续派），派单后立即结束回合等待异步通知。`,
+    });
+  }
+
+  /* ----------------------------------------------------- 3. pressure check */
+  const lastWarnStep = Number(state.lastWarnStep ?? -999);
+  const warnCooled = globalStep < lastWarnStep || globalStep - lastWarnStep >= WARN_STEP_COOLDOWN;
   if (transcriptBytes >= PRESSURE_BYTES && warnCooled) {
-    state.lastWarnInvocation = invocationNum;
+    state.lastWarnStep = globalStep;
     const mb = (transcriptBytes / (1024 * 1024)).toFixed(1);
     steps.push({
       systemMessage: {
@@ -144,19 +197,22 @@ if (mode === 'off' || isSubAgent(payload)) {
     });
   }
 
+  writeSession(conversationId, state);
+
   if (steps.length > 0) {
     logDecision({
       hook: 'pre-invocation',
       action: 'inject',
       mode,
       steps: steps.length,
+      globalStep,
+      reads,
+      writes,
+      isNewUserTurn,
       transcriptMB: Number((transcriptBytes / (1024 * 1024)).toFixed(2)),
-      userInput: lastUserInput(payload).slice(0, 80),
+      userInput: userInput.slice(0, 80),
     });
-    writeSession(conversationId, state);
-    if (mode === 'enforce') output({ injectSteps: steps });
-    else output({});
-  } else {
-    output({});
   }
+
+  output(steps.length > 0 && mode === 'enforce' ? { injectSteps: steps, terminationBehavior: '' } : {});
 }

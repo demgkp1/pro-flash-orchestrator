@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v0.3)
+ * SessionStart hook (v0.3.2)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -14,14 +14,15 @@ import { currentMode, isSubAgent, logDecision, output, readPayload, setContext }
 const RULES = '[Pro-Flash Orchestrator] 会话已接管。主创架构师与 Flash 助手职责划分及分流红线由常驻 AGENTS.md 规定，请严格遵循。';
 
 const CARD = [
-  '**Pro-Flash Orchestrator v0.3.0 已接管本会话**',
+  '**Pro-Flash Orchestrator v0.3.2 已接管本会话**',
   '',
   '| 守门 | 行为 |',
   '| --- | --- |',
-  '| 派单守门 | `pro`→`flash` 降级、自动追加汇报契约、阻断子代理套娃 |',
-  '| 读取守门 | 大代码文件自动切片；长文档拦截并改派 `flash_lite` |',
+  '| 派单守门 | `pro`→`flash` 降级、追加契约、阻断套娃、拦截 `manage_subagents` 轮询 |',
+  '| 读取守门 | 大代码自动切片；长文档拦截；拦截切片连读 ≥4 个文件 |',
+  '| 写入守门 | 拦截连续直改 ≥3 个源码文件，强制外派 Flash |',
   '| 命令守门 | 拦截 `cat` 超大文件与无界 `git log` |',
-  '| 漂移提醒 | 连续改文件却从不派单时，注入一行提醒 |',
+  '| 漂移与唤醒 | 长会话新轮次瞬态唤醒，去重切片精准告警 |',
   '',
   '> 关闭：`PRO_MODE=off`　试运行：`PRO_MODE=shadow`　体检：`node scripts/doctor.mjs`　复盘：`node scripts/report.mjs`',
 ].join('\n');
@@ -52,7 +53,7 @@ if (mode === 'off') {
           // whole hook result (verified against language_server 2026-11-06).
           // renderInfo is the supported way to render a card to the user.
           renderInfo: {
-            title: 'Pro-Flash Orchestrator v0.3.0',
+            title: 'Pro-Flash Orchestrator v0.3.2',
             titlePrefix: '已接管',
             markdown: CARD,
           },

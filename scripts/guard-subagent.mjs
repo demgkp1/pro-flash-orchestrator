@@ -13,7 +13,21 @@
  */
 import os from 'node:os';
 import path from 'node:path';
-import { ALLOW, currentMode, getArgs, isSubAgent, lastUserInput, logDecision, output, readPayload, setContext, toolName } from './lib.mjs';
+import {
+  ALLOW,
+  currentMode,
+  getArgs,
+  isSubAgent,
+  lastUserInput,
+  logDecision,
+  markSubagentSpawn,
+  output,
+  readPayload,
+  readSession,
+  setContext,
+  toolName,
+  writeSession,
+} from './lib.mjs';
 
 const CONTRACT_MARKER = '[PRO-CONTRACT]';
 const LEGACY_CONTRACT_MARKER = '[ARGON-CONTRACT]';
@@ -23,6 +37,7 @@ const FORCE_PATTERN = /\[(?:FORCE-PRO|FORCE-ARGON|ALLOW-PRO)\]/i;
 const INVOKE = 'invoke_subagent';
 const DEFINE = 'define_subagent';
 const SEND = 'send_message';
+const MANAGE = 'manage_subagents';
 const CHEAP_MODELS = new Set(['flash', 'flash_lite']);
 
 /** Some dispatches arrive double-encoded: `Model: "\"flash_lite\""`. */
@@ -86,12 +101,39 @@ function decide() {
   const args = getArgs(payload);
   const sub = isSubAgent(payload);
 
+  /* 0. polling guard on manage_subagents ------------------------------- */
+  if (tool === MANAGE) {
+    const action = clean(args.Action || args.action).toLowerCase();
+    if (!sub && action === 'list' && !FORCE_PATTERN.test(lastUserInput(payload))) {
+      const reason =
+        '【轮询守门】严禁主模型调用 manage_subagents(Action="list") 轮询子代理状态（会白白消耗一轮主模型上下文推理并引发抢改）。子代理完成后系统会自动异步唤醒你；请直接结束当前回合（不要调用任何工具）静默等待子代理消息。';
+      logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, subAction: action });
+      return mode === 'enforce' ? { decision: 'deny', reason } : ALLOW;
+    }
+    return ALLOW;
+  }
+
   /* 1. recursion ------------------------------------------------------- */
   if (sub && (tool === INVOKE || tool === DEFINE)) {
     const reason =
       '【递归守门】子代理不得再派发子代理。请直接执行任务并按 [PRO-CONTRACT] 回报，把需要拆分的工作写进汇报。';
     logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, reason });
     return mode === 'enforce' ? { decision: 'deny', reason } : ALLOW;
+  }
+
+  if (!sub) {
+    if (tool === INVOKE) {
+      markSubagentSpawn(payload.conversationId);
+      const state = readSession(payload.conversationId);
+      state.readsSinceDispatch = [];
+      state.writesSinceDispatch = [];
+      writeSession(payload.conversationId, state);
+    } else if (tool === SEND) {
+      const state = readSession(payload.conversationId);
+      state.readsSinceDispatch = [];
+      state.writesSinceDispatch = [];
+      writeSession(payload.conversationId, state);
+    }
   }
 
   if (mode === 'shadow') {

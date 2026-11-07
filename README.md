@@ -5,9 +5,9 @@ A dual-tier model orchestration engine for Google Antigravity.
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. Keeps the flagship Pro model focused on core decisions and benchmark implementations, while offloading peripheral implementation, unit tests, and document exploration to Flash and Flash-Lite. All governance policies are enforced at the runtime lifecycle Hook level via deterministic physical guards.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.3.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.3.2-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-71%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-74%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -49,7 +49,8 @@ Soft guidelines embedded in system prompts ("please delegate routine work") freq
 │    research -> flash_lite              │
 │    self / tasks -> flash               │
 │  - Injects [FLASH-WORKER] & contract   │
-│  - Recursion block: Denies nested tasks│
+│  - Anti-recursion & anti-polling       │
+│  - Read/Write guards: slices & limits  │
 └───────────────────┬────────────────────┘
                     │
                     ▼
@@ -75,12 +76,13 @@ Soft guidelines embedded in system prompts ("please delegate routine work") freq
 | Guard System | Hook Target | Enforcement Policy | Practical Benefit |
 | :--- | :--- | :--- | :--- |
 | **Role & Card Setup** | `SessionStart` | Injects universal governance rules once at session start; status card is emitted via `renderInfo` to the UI layer. Automatically skips role injection for sub-agents. | Status card consumes 0 model tokens and leaves no residue in the context window. |
-| **Enhanced Sub-Agent Downgrade** | `PreToolUse` (`invoke_subagent`) | Intercepts sub-agent calls; regardless of whether the host model is Pro or Flash, `research` is strictly routed to `flash_lite`, and `self` / routine engineering tasks to `flash`, unless explicitly exempted via `[FORCE-PRO]`. | Drastically minimizes reasoning token consumption on exploration and boilerplate tasks. |
-| **Cold-Start & Recursion Guard** | `PreToolUse` (`invoke_subagent`, `define_subagent`) | Automatically prepends `[FLASH-WORKER]` prefix to dispatch prompts for cold-start identification before first-turn transcript flush; detects sub-agent context via transcript markers (`SYSTEM`/`SYSTEM_SDK`) and denies nested delegation. | Eliminates runaway recursive subagent loops and avoids cold-start role misidentification. |
+| **Enhanced Sub-Agent Downgrade** | `PreToolUse` (`invoke_subagent`) | Regardless of whether the host model is Pro or Flash, `research` is strictly routed to `flash_lite`, and `self` / routine engineering tasks to `flash`, unless explicitly exempted via `[FORCE-PRO]`. | Drastically minimizes reasoning token consumption on exploration and boilerplate tasks. |
+| **Write Guard & Benchmark Limit** | `PreToolUse` (`write_file`, `edit_file`, etc.) | Direct source code modifications by the host model are capped at 1–2 benchmark files. Tracks `writesSinceDispatch`: attempting to modify a 3rd distinct source file is hard-denied (`deny`) and forced to delegate to Flash. Subagents, artifacts, and build/dependency paths are exempt. | Stops Pro from monopolizing multi-file engineering; enforces same-turn offloading to workers. |
+| **Cold-Start, Recursion & Anti-Polling** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **Cold-Start Spawn Window**: Records timestamp & parent conversation ID in `last_spawn.json` during dispatch, paired with transcript markers to eliminate misidentification;<br>2. **Anti-Recursion**: Strictly denies nested subagent delegation (`deny`);<br>3. **Anti-Polling**: Denies host calls to `manage_subagents(Action="list")` (`deny`), preventing wasteful polling tokens and out-of-order race conditions; instructs agent to wait for reactive notification (`Action="kill"` allowed). | Prevents recursion deadlocks, race conditions, and wasted token cycles during async subagent execution. |
 | **Neutral Contract & Subagent Definition** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | Appends `[FLASH-WORKER]` and `[PRO-CONTRACT]`: implementation workers must return a 4-column table with test output; `research` workers must return structured summaries without file writes. Injects contract into `define_subagent` SystemPrompt. Falls back safely to absolute path `~/.gemini/antigravity/brain/<convId>` if `artifactDirectoryPath` is missing. | Prevents source code pasting, avoids file-write errors in read-only sandboxes, and prevents workspace pollution. |
-| **File Slicing & Minified Flood Guard** | `PreToolUse` (`read_file`, `view_file`) | Unsliced reads of 300–800 line code files are clamped to lines [1, 150]; code >800 lines or docs >400 lines are denied. **Flood Protection**: Even if StartLine/EndLine is specified, files >40KB with average line length >4KB (minified code/data) are blocked. `.venv`, `target`, and artifact paths are automatically exempt. | Eliminates context flooding; blocks single-line minified payloads; small file slicing incurs zero extra round-trips. |
+| **Sliced Multi-Read & Flood Guard** | `PreToolUse` (`read_file`, `view_file`) | 1. **Smart Slicing**: Unsliced reads of 300–800 line code files are clamped to [1, 150]; code >800 lines or docs >400 lines are denied;<br>2. **Minified Flood Guard**: Files >40KB with average line length >4KB are blocked;<br>3. **Sliced Multi-Read Guard**: Tracks `readsSinceDispatch`; attempting to read a 4th distinct source/doc file via slicing triggers a hard deny, mandating `research (flash_lite)`. Dependency & artifact paths exempt. | Eliminates single-line minified dumps and context saturation; completely blocks multi-file slice-reading workarounds. |
 | **Enhanced Dump Guard** | `PreToolUse` (`run_command`) | Unwraps multi-layer shells; splits pipelines; blocks unbounded `git log` and `cat`/`Get-Content` on files >400KB. **Enhanced Coverage**: Intercepts shell dumps across variable assignments (`$content = Get-Content`), sub-expressions (`Resolve-Path`), and .NET static methods (`[IO.File]::ReadAllText`). Allows file redirections (`>`, `>>`, `| Set-Content`, `> /dev/null`). | Prevents terminal flooding and seals command escape vectors without interfering with offline file writes. |
-| **Precision Drift Detection** | `PreInvocation` | Evaluates transcript history; injects a single-turn `ephemeralMessage` reminder when 4+ consecutive solo file edits occur without delegation. **Precision Filtering**: Silences architect drift warnings when the runtime model is Flash; parses AST/JSONL toolCall structures to eliminate false positives caused by tool-name string literals in conversational text. | Remains silent by default; nudges only when execution drift occurs without false alarms. |
+| **Turn-Boundary Wakeup & Deduplicated Drift** | `PreInvocation` | 1. **Turn-Boundary Wakeup**: In long conversations (`globalStep >= 8`), injects a transient 1-line `ephemeralMessage` at the start of new user turns to awaken the architect's dispatch discipline;<br>2. **Deduplicated Drift Warning**: Evaluates deduplicated and exempt-filtered `readsSinceDispatch` and `writesSinceDispatch`, alerting when consecutive reads/writes occur without delegation;<br>3. **Precision Filtering**: Silences architect drift warnings when the runtime model is Flash; parses AST/JSONL toolCall structures to eliminate false positives. | Zero context footprint, combining proactive turn wakeups with precision drift alerts to maintain architect discipline. |
 
 ---
 
@@ -163,7 +165,7 @@ The plugin bundles the `/flash-dev` skill to structure collaboration between the
 ## Diagnostics and Telemetry
 
 ### 1. Test Suite
-Run the 71-assertion diagnostic test suite:
+Run the 74-assertion diagnostic test suite:
 ```bash
 node scripts/doctor.mjs
 ```
@@ -199,13 +201,14 @@ pro-flash-orchestrator/
 │   └── flash-dev/
 │       └── SKILL.md            # /flash-dev prompt templates and procedures
 ├── scripts/
-│   ├── lib.mjs                 # Shared utility library
+│   ├── lib.mjs                 # Shared utility library (subagent detection, spawn window, logging)
 │   ├── session-start.mjs       # Startup role injection and status card
-│   ├── pre-invocation.mjs      # Sliding-window transcript drift detector
-│   ├── guard-subagent.mjs      # Sub-agent guard (recursion, downgrade, contract)
-│   ├── guard-read-file.mjs     # Read guard (slicing, dependency exemptions)
+│   ├── pre-invocation.mjs      # Turn-boundary wakeup & deduplicated drift detector
+│   ├── guard-subagent.mjs      # Sub-agent guard (recursion, polling, downgrade, contract)
+│   ├── guard-read-file.mjs     # Read guard (slicing, dependency exemptions, multi-read deny)
+│   ├── guard-write-file.mjs    # Write guard (benchmark edits limit, multi-file write deny)
 │   ├── guard-command.mjs       # Command guard (unwrapping, redirection, dump blocks)
-│   ├── doctor.mjs              # 71-assertion automated test suite
+│   ├── doctor.mjs              # 74-assertion automated test suite
 │   └── report.mjs              # Production decision telemetry reviewer
 └── assets/
     └── logo.svg                # Plugin icon

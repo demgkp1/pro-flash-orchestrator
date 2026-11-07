@@ -23,13 +23,16 @@ import {
   fileInfo,
   getArgs,
   isSubAgent,
+  lastUserInput,
   logDecision,
   mentions,
   output,
   readPayload,
+  readSession,
   resolvePath,
   setContext,
   toolName,
+  writeSession,
 } from './lib.mjs';
 
 const READ_TOOLS = new Set(['read_file', 'view_file', 'view_content_chunk']);
@@ -150,10 +153,20 @@ function decide() {
     end,
   };
 
+  let recordNormFile = null;
+  let convId = '';
+  let state = null;
+  let readList = [];
+
   /**
    * @param {{deny?: boolean, reason?: string, overwrite?: object}} result
    */
   const finish = ({ deny = false, reason = '', overwrite = null } = {}) => {
+    if (!deny && recordNormFile && state) {
+      readList.push(recordNormFile);
+      state.readsSinceDispatch = readList;
+      writeSession(convId, state);
+    }
     const action = deny
       ? mode === 'enforce' ? 'deny' : 'would-deny'
       : overwrite
@@ -169,6 +182,30 @@ function decide() {
   /* sub-agents and exempt paths are never policed ----------------------- */
   if (sub || !info.exists || isExemptPath(file, payload)) return finish();
   if (mentions(payload, '[ALLOW-READ]') || (base.length >= 5 && mentions(payload, base))) return finish();
+
+  if (CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext)) {
+    convId = String(payload.conversationId || 'unknown');
+    state = readSession(convId);
+    const uInput = lastUserInput(payload).trim();
+    if (uInput && uInput !== state.lastReadUserInput) {
+      state.lastReadUserInput = uInput;
+      state.readsSinceDispatch = [];
+    }
+    readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
+    const normFile = path.normalize(file);
+    if (!readList.includes(normFile)) {
+      if (readList.length >= 3) {
+        return finish({
+          deny: true,
+          reason:
+            '【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 3 个不同文件（' +
+            readList.map((p) => path.basename(p)).join(', ') +
+            '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash_lite") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
+        });
+      }
+      recordNormFile = normFile;
+    }
+  }
 
   /* binary / absurd size ------------------------------------------------ */
   if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {

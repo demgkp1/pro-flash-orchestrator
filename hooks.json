@@ -23,11 +23,26 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "invoke_subagent|define_subagent|send_message",
+        "matcher": "invoke_subagent|define_subagent|send_message|manage_subagents",
         "hooks": [
           {
             "type": "command",
             "command": "node ./scripts/guard-subagent.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  },
+  "pro-write-guard": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node ./scripts/guard-write-file.mjs",
             "timeout": 5
           }
         ]

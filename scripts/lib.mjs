@@ -18,6 +18,16 @@ export const PLUGIN_DIR = path.dirname(SCRIPTS_DIR);
 export const STATE_DIR = path.join(PLUGIN_DIR, '.state');
 export const SESSION_DIR = path.join(STATE_DIR, 'sessions');
 export const LOG_FILE = path.join(STATE_DIR, 'decisions.jsonl');
+export const SPAWN_FILE = path.join(STATE_DIR, 'last_spawn.json');
+
+export function markSubagentSpawn(parentConvId) {
+  try {
+    ensureStateDir();
+    fs.writeFileSync(SPAWN_FILE, JSON.stringify({ ts: Date.now(), parent: String(parentConvId || '') }), 'utf8');
+  } catch {
+    /* ignore */
+  }
+}
 
 const MODES = new Set(['off', 'shadow', 'enforce']);
 const MAX_LOG_BYTES = 1024 * 1024;
@@ -137,12 +147,65 @@ function transcriptVerdict(rawPath) {
 export function isSubAgent(payload) {
   try {
     const p = payload || {};
-    if (p.parentConversationId) return true;
+    const convId = String((p && p.conversationId) || '');
+    const isDoctor = convId === 'doctor-test';
+    const sess = convId && convId !== 'unknown' ? readSession(convId) : {};
+
+    if (!isDoctor && sess && sess.isSubAgent === true) return true;
+    if (p.parentConversationId) {
+      if (convId && convId !== 'unknown' && !isDoctor) {
+        writeSession(convId, { ...sess, isSubAgent: true });
+      }
+      return true;
+    }
     const ctx = p.callerContext;
-    if (ctx && typeof ctx === 'object' && ctx.parentConversationId) return true;
+    if (ctx && typeof ctx === 'object' && ctx.parentConversationId) {
+      if (convId && convId !== 'unknown' && !isDoctor) {
+        writeSession(convId, { ...sess, isSubAgent: true });
+      }
+      return true;
+    }
+    if (!isDoctor && sess && sess.isSubAgent === false) return false;
 
     const verdict = transcriptVerdict(p.transcriptPath);
-    if (verdict !== null) return verdict;
+    if (verdict === true) {
+      if (convId && convId !== 'unknown' && !isDoctor) {
+        writeSession(convId, { ...sess, isSubAgent: true });
+      }
+      return true;
+    }
+    if (verdict === false) {
+      if (convId && convId !== 'unknown' && !isDoctor) {
+        writeSession(convId, { ...sess, isSubAgent: false });
+      }
+      return false;
+    }
+
+    if (verdict === null && !p.toolCall) {
+      try {
+        if (fs.existsSync(SPAWN_FILE)) {
+          const spawnRaw = fs.readFileSync(SPAWN_FILE, 'utf8');
+          const spawn = JSON.parse(spawnRaw);
+          if (
+            spawn &&
+            Date.now() - Number(spawn.ts || 0) < 20000 &&
+            convId &&
+            convId !== 'unknown' &&
+            convId !== spawn.parent
+          ) {
+            writeSession(convId, { ...sess, isSubAgent: true, parentConversationId: spawn.parent });
+            try {
+              fs.unlinkSync(SPAWN_FILE);
+            } catch {
+              /* ignore */
+            }
+            return true;
+          }
+        }
+      } catch {
+        /* ignore */
+      }
+    }
 
     const input = String(p.lastUserInput || '');
     // Cold-start sub-agent: system message wrapper or prefixed/appended contract marker.

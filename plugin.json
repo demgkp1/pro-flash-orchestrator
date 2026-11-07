@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
-  "displayName": "Pro Architect + Flash Worker (v0.3.0)",
-  "version": "0.3.0",
+  "displayName": "Pro Architect + Flash Worker (v0.3.2)",
+  "version": "0.3.2",
   "license": "MIT",
-  "description": "v0.3.0 全场景通用主动分流工作流：适用于一切代码开发、Bug 排查、架构重构、代码审查、测试补齐与长文档研读。Pro 亲自把控核心决策与标杆实现；Hook 物理守门负责 pro 降级、汇报契约注入、递归拦截、大文件切片与命令泄洪。",
+  "description": "v0.3.2 全场景通用主动分流工作流：适用于一切代码开发、Bug 排查、架构重构、代码审查、测试补齐与长文档研读。Pro 亲自把控核心决策与标杆实现；Hook 物理守门负责 pro 降级、汇报契约注入、递归/轮询阻断、大代码切片/多文件连读拦截、连续写入守门与命令防泄洪，并在新轮次精准瞬态唤醒。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",
