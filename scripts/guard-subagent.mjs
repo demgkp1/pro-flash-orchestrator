@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for `invoke_subagent` / `define_subagent` / `send_message` (v3.3).
+ * PreToolUse guard for `invoke_subagent` / `define_subagent` / `send_message` (v0.3).
  *
  * 1. recursion  — a sub-agent may not dispatch another sub-agent (hard deny).
  * 2. model leak — `Model` missing / "inherit" / "pro" is rewritten to
@@ -11,10 +11,14 @@
  *
  * Failure policy: any exception -> {"decision":"allow"} (never block the loop).
  */
+import os from 'node:os';
+import path from 'node:path';
 import { ALLOW, currentMode, getArgs, isSubAgent, lastUserInput, logDecision, output, readPayload, setContext, toolName } from './lib.mjs';
 
 const CONTRACT_MARKER = '[PRO-CONTRACT]';
 const LEGACY_CONTRACT_MARKER = '[ARGON-CONTRACT]';
+const WORKER_PREFIX = '[FLASH-WORKER]';
+const PREFIX_PATTERN = /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/;
 const FORCE_PATTERN = /\[(?:FORCE-PRO|FORCE-ARGON|ALLOW-PRO)\]/i;
 const INVOKE = 'invoke_subagent';
 const DEFINE = 'define_subagent';
@@ -31,7 +35,15 @@ function clean(value) {
 
 function artifactDir(payload) {
   const dir = String((payload && payload.artifactDirectoryPath) || '').trim();
-  return dir || '.gemini/artifacts';
+  if (dir) return dir;
+  const convId = String((payload && payload.conversationId) || '').trim();
+  if (convId && convId !== 'unknown') {
+    return path.join(os.homedir(), '.gemini', 'antigravity', 'brain', convId);
+  }
+  const tPath = String((payload && payload.transcriptPath) || '').trim();
+  const match = tPath.match(/^(.*[\\/]\.gemini[\\/]antigravity[\\/]brain[\\/][^\\/]+)/i);
+  if (match) return match[1];
+  return path.join(os.homedir(), '.gemini', 'antigravity', 'brain', 'default');
 }
 
 function contractFor(typeName, payload) {
@@ -50,8 +62,18 @@ function contractFor(typeName, payload) {
 
 function appendContract(text, contract) {
   const base = String(text || '').replace(/\s+$/, '');
-  if (base.includes(CONTRACT_MARKER) || base.includes(LEGACY_CONTRACT_MARKER)) return null;
-  return base ? `${base}\n\n${contract}` : contract;
+  const hasContract = base.includes(CONTRACT_MARKER) || base.includes(LEGACY_CONTRACT_MARKER);
+  const hasPrefix = PREFIX_PATTERN.test(base);
+  if (hasContract && hasPrefix) return null;
+
+  let next = base;
+  if (!hasPrefix) {
+    next = next ? `${WORKER_PREFIX} ${next}` : WORKER_PREFIX;
+  }
+  if (!hasContract) {
+    next = next ? `${next}\n\n${contract}` : `${WORKER_PREFIX}\n\n${contract}`;
+  }
+  return next;
 }
 
 function decide() {
@@ -92,7 +114,11 @@ function decide() {
     const target = typeName === 'research' ? 'flash_lite' : 'flash';
 
     if (!forced) {
-      if (lower === 'pro') {
+      if (typeName === 'research') {
+        if (lower !== 'flash_lite') {
+          overwrite.Model = 'flash_lite';
+        }
+      } else if (lower === 'pro') {
         overwrite.Model = target;
       } else if (!isCurrentModelFlash && !CHEAP_MODELS.has(lower)) {
         overwrite.Model = target;
@@ -112,12 +138,32 @@ function decide() {
         modelName: currentModel,
         from: model || '(missing)',
         to: overwrite.Model || model,
-        contract: Boolean(overwrite.Prompt),
+        contract: Boolean(promptKey && overwrite[promptKey]),
         forced,
       });
       return { decision: 'allow', overwrite };
     }
     logDecision({ hook: 'guard-subagent', tool, action: 'pass', mode, typeName, modelName: currentModel, model });
+    return ALLOW;
+  }
+
+  /* custom subagent definition: enforce contract in SystemPrompt ---------- */
+  if (tool === DEFINE) {
+    const name = clean(args.Name || args.name).toLowerCase();
+    const spKey =
+      typeof args.SystemPrompt === 'string'
+        ? 'SystemPrompt'
+        : typeof args.systemPrompt === 'string'
+          ? 'systemPrompt'
+          : null;
+    if (!spKey) return ALLOW;
+    const sp = String(args[spKey]);
+    const isReadOnly = args.EnableWriteTools === false || name.includes('research');
+    const nextSp = appendContract(sp, contractFor(isReadOnly ? 'research' : 'self', payload));
+    if (nextSp) {
+      logDecision({ hook: 'guard-subagent', tool, action: 'contract', mode, name });
+      return { decision: 'allow', overwrite: { [spKey]: nextSp } };
+    }
     return ALLOW;
   }
 

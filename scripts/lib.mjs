@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Shared helpers for pro-flash-orchestrator hooks (v3.3).
+ * Shared helpers for pro-flash-orchestrator hooks (v0.3).
  *
  * Design rules:
  *  - Never throw into the caller: every helper is exception-safe, so a hook can
@@ -144,9 +144,18 @@ export function isSubAgent(payload) {
     const verdict = transcriptVerdict(p.transcriptPath);
     if (verdict !== null) return verdict;
 
-    // Transcript not written yet (first tool call of a session): the dispatched
-    // prompt starts with the marker; a mid-sentence mention must not count.
-    return /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(String(p.lastUserInput || ''));
+    const input = String(p.lastUserInput || '');
+    // Cold-start sub-agent: system message wrapper or prefixed/appended contract marker.
+    if (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender='))) {
+      return true;
+    }
+    if (/^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input)) {
+      return true;
+    }
+    if (/\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input)) {
+      return true;
+    }
+    return false;
   } catch {
     return false;
   }
@@ -261,8 +270,9 @@ export function fileInfo(file) {
     for (let i = 0; i < buf.length; i += 1) if (buf[i] === 10) lines += 1;
     if (buf.length > 0 && buf[buf.length - 1] !== 10) lines += 1;
     const truncated = st.size > cap;
-    const estimatedLines = truncated ? Math.round(st.size / 35) : lines;
-    return { exists: true, bytes: st.size, lines: estimatedLines, truncated };
+    const avgLineBytes = lines > 0 ? Math.round(buf.length / lines) : st.size;
+    const estimatedLines = truncated ? Math.round(st.size / Math.max(avgLineBytes, 35)) : lines;
+    return { exists: true, bytes: st.size, lines: estimatedLines, avgLineBytes, truncated };
   } catch {
     return { exists: false };
   }

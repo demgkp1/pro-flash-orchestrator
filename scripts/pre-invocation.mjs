@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v3.3) — drift detector, not a per-turn nag.
+ * PreInvocation hook (v0.3) — drift detector, not a per-turn nag.
  *
  * The old version repeated the same paragraph before every model call. That is
  * quadratic: N copies live in the trajectory and are re-sent on every later
@@ -31,13 +31,16 @@ const NAG_COOLDOWN = 6; // invocations between two drift nudges
 const WARN_COOLDOWN = 10; // invocations between two compaction warnings
 const PRESSURE_BYTES = 4 * 1024 * 1024;
 const TAIL_BYTES = 512 * 1024;
-const WRITE_PATTERN = /"(?:write_file|write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
+const WRITE_TOOL_CALL_RE = /"name"\s*:\s*"(?:write_file|write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
+const DISPATCH_TOOL_CALL_RE = /"name"\s*:\s*"invoke_subagent"/;
 
 const payload = readPayload();
 setContext(payload);
 const mode = currentMode();
 const conversationId = payload.conversationId || 'unknown';
 const invocationNum = Number(payload.invocationNum || 0);
+const currentModel = String(payload.modelName || '').toLowerCase();
+const isCurrentModelFlash = currentModel.includes('flash');
 
 if (mode === 'off' || isSubAgent(payload)) {
   output({});
@@ -56,15 +59,62 @@ if (mode === 'off' || isSubAgent(payload)) {
   }
 
   /* ---------------------------------------------------------- drift check */
-  if (transcriptBytes > 0) {
+  if (transcriptBytes > 0 && !isCurrentModelFlash) {
     try {
       const tail = readTail(transcriptPath, TAIL_BYTES);
-      const joined = tail.split('\n').slice(-400).join('\n');
-      // Count only what happened AFTER the last dispatch: one dispatch early in
-      // the window must not mask ten solo file edits that follow it.
-      const lastDispatch = joined.lastIndexOf('"invoke_subagent"');
-      const window = lastDispatch >= 0 ? joined.slice(lastDispatch + '"invoke_subagent"'.length) : joined;
-      const writes = (window.match(WRITE_PATTERN) || []).length;
+      const lines = tail.split(/\r?\n/).filter(Boolean).slice(-400);
+      let writes = 0;
+      for (const line of lines) {
+        let isPlanner = true;
+        try {
+          const obj = JSON.parse(line);
+          if (obj && typeof obj === 'object' && obj.source && obj.source !== 'MODEL' && obj.type !== 'PLANNER_RESPONSE') {
+            isPlanner = false;
+          }
+          if (obj && typeof obj === 'object' && Array.isArray(obj.tool_calls)) {
+            for (const tc of obj.tool_calls) {
+              const name = String((tc && tc.name) || '');
+              if (name === 'invoke_subagent') {
+                writes = 0;
+              } else if (
+                name === 'write_file' ||
+                name === 'write_to_file' ||
+                name === 'edit_file' ||
+                name === 'multi_replace_file_content' ||
+                name === 'replace_file_content'
+              ) {
+                writes += 1;
+              }
+            }
+            continue;
+          }
+          if (obj && typeof obj === 'object' && obj.toolCall && typeof obj.toolCall === 'object') {
+            const name = String(obj.toolCall.name || '');
+            if (name === 'invoke_subagent') {
+              writes = 0;
+            } else if (
+              name === 'write_file' ||
+              name === 'write_to_file' ||
+              name === 'edit_file' ||
+              name === 'multi_replace_file_content' ||
+              name === 'replace_file_content'
+            ) {
+              writes += 1;
+            }
+            continue;
+          }
+        } catch {
+          /* fallback for truncated JSONL lines */
+        }
+        if (!isPlanner) continue;
+        if (!line.includes('"tool_calls"') && !line.includes('"toolCall"')) continue;
+        if (DISPATCH_TOOL_CALL_RE.test(line)) {
+          writes = 0;
+        } else {
+          const matches = line.match(WRITE_TOOL_CALL_RE);
+          if (matches) writes += matches.length;
+        }
+      }
       const cooled = invocationNum - Number(state.lastNagInvocation || -999) >= NAG_COOLDOWN;
       if (writes >= 4 && cooled) {
         state.lastNagInvocation = invocationNum;

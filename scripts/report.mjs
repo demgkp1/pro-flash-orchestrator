@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * report.mjs — summarize what the guards actually did in real sessions (v3.3).
+ * report.mjs — summarize what the guards actually did in real sessions (v0.3).
  *
  * Doctor runs tag their entries with ARGON_TEST=1, so this report only shows
  * production decisions. Use it to tune thresholds with data instead of guesses.

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for  read_file / view_file / view_content_chunk  (v3.3).
+ * PreToolUse guard for  read_file / view_file / view_content_chunk  (v0.3).
  *
  * Economics that drive the thresholds:
  *   one extra model round-trip re-sends the whole conversation, while a
@@ -180,6 +180,14 @@ function decide() {
 
   /* explicit slice: only clamp the span --------------------------------- */
   if (hasSlice) {
+    // Guard against single-line / minified flood: if average line length > 4KB
+    // and total file exceeds 40KB, line-based slicing cannot bound token volume.
+    if ((info.bytes || 0) > CODE_HARD_BYTES && (info.avgLineBytes || 0) > 4096) {
+      return finish({
+        deny: true,
+        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="flash_lite") 检索或用 grep_search 定位。`,
+      });
+    }
     const from = start ?? 1;
     const to = end ?? from + MAX_SPAN - 1;
     if (to - from + 1 <= MAX_SPAN) {

@@ -2,12 +2,12 @@
 
 面向 Google Antigravity 的双级大模型协同分流引擎。
 
-由 Pro 模型负责高维度系统架构、核心接口与算法设计；Flash 及 Flash-Lite 模型负责外围工程扩写、测试用例编写与文档检索。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
+面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；Flash 及 Flash-Lite 模型负责外围工程扩写、测试用例编写与文档检索。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v3.3.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.3.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-63%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-71%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -26,29 +26,35 @@
 
 ## 协同分工模型
 
+### 全场景分流原则（按规模分流，不限语言、框架与领域）
+- **探路与审阅（≥3 个文件或长文档/大代码）**：必须外派 `research (flash_lite)` 提取结构化摘要与精确行号，禁止主模型并发切片连读。
+- **工程实现与批量修复（>50 行或 ≥2 个文件）**：Pro 亲自落盘核心标杆/关键算法，同轮并发外派 `self (flash)` 扩写外围与回归单测。
+- **单点微调（≤50 行、≤2 个已知文件）**：Pro 亲自切片直改（反向止损，避免多轮派单延迟）。
+
 ```text
 [ 用户输入 / /flash-dev ]
             │
             ▼
 ┌────────────────────────────────────────┐
 │         Pro 主创架构师 (旗舰模型)       │
-│  - 领域设计 / 数据库 Schema / 核心算法 │
-│  - 编写核心标杆文件 (Benchmark)         │
+│  - 全场景通用：编程/审阅/排错/重构/文档 │
+│  - 亲自把控核心决策与标杆实现 (Benchmark)│
 │  - 同轮并发派发子代理                  │
 └───────────────────┬────────────────────┘
-                    │ invoke_subagent
+                    │ invoke_subagent / define_subagent
                     ▼
 ┌────────────────────────────────────────┐
 │       Hook 守门拦截 (Physical Guards)  │
-│  - 物理强制降级: Pro -> Flash/Flash-Lite│
-│  - 自动追加 [PRO-CONTRACT] 汇报契约   │
+│  - 物理强制降级: research→flash_lite   │
+│                 self/工程→flash        │
+│  - 自动注入 [FLASH-WORKER] 与汇报契约  │
 │  - 递归阻断: 禁止子代理再次派单        │
 └───────────────────┬────────────────────┘
                     │
                     ▼
 ┌────────────────────────────────────────┐
 │         Flash 执行助手 (轻量模型)      │
-│  - 机械实现 / CRUD / 单元测试 / 迁移   │
+│  - 探路(flash_lite) / 机械扩写(flash)  │
 │  - 运行真实命令自检 (自闭环报错)       │
 │  - 仅返回结构化四列表格，禁止大段源码  │
 └───────────────────┬────────────────────┘
@@ -67,13 +73,13 @@
 
 | 守门机制 | 挂载钩子 | 判定与处理规则 | 经济与上下文收益 |
 | :--- | :--- | :--- | :--- |
-| **角色与契约初始化** | `SessionStart` | 会话启动时单次注入规则说明；状态卡片通过 `renderInfo` 投递至 UI 渲染层。 | 状态卡片对大模型零 Token 消耗，不侵占上下文。 |
-| **子代理物理降级** | `PreToolUse` (`invoke_subagent`) | 检查请求模型，若为 `pro` 且未携带 `[FORCE-PRO]` 豁免标识，强制改写为 `flash`（开发任务）或 `flash_lite`（调研任务）。 | 杜绝体力活外派占用 Pro 配额。 |
-| **递归派单阻断** | `PreToolUse` (`invoke_subagent`, `define_subagent`) | 通过转录首行 `SYSTEM`/`SYSTEM_SDK` 及上下文特征识别子代理身份，拦截子代理再次派单（`deny`）。 | 消除无休止的多层子代理调用死循环。 |
-| **中立契约注入** | `PreToolUse` (`invoke_subagent`, `send_message`) | 派单时自动追加 `[PRO-CONTRACT]`：工程任务必须返回四列表格并附带自检结果；调研任务（`research`）必须直接输出结构化摘要，不要求写文件。 | 消除大段源码回贴与只读沙箱写文件异常。 |
-| **大文件智能切片** | `PreToolUse` (`read_file`, `view_file`) | 未显式切片读取代码文件（300-800行）时，自动改写参数限制在 [1, 150] 行内；超过 800 行代码或 400 行文档/数据日志直接拦截，引导使用子代理。豁免 `.venv` 与 `target` 等依赖目录。 | 消除超大文件撑爆上下文的隐患，小文件切片无需额外轮次。 |
-| **命令防倾倒** | `PreToolUse` (`run_command`) | 多层递归解包 Shell 命令；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。放行输出重定向（`>`、`>>`、`| Set-Content`、`> /dev/null`）。 | 杜绝终端海量日志倾倒至对话中，同时不影响离线写盘操作。 |
-| **会话漂移感知** | `PreInvocation` | 解析转录滑动窗口，自上次派单以来若连续 4 次直接改动代码文件且未派单，注入单轮即抛的 `ephemeralMessage` 提醒分流。 | 保持静默，仅在出现注意力漂移时发出无上下文残留的即时告警。 |
+| **角色与契约初始化** | `SessionStart` | 会话启动时单次注入全场景分工规则；状态卡片通过 `renderInfo` 投递至 UI 渲染层。子代理启动自动跳过角色注入。 | 状态卡片对大模型零 Token 消耗，不侵占上下文。 |
+| **子代理降级增强** | `PreToolUse` (`invoke_subagent`) | 主模型无论 Pro 还是 Flash，`research` 调研子代理一律降级为 `flash_lite` 极轻量模型；`self` 与常规工程子代理降级为 `flash`；仅携带 `[FORCE-PRO]` 时保留旗舰模型。 | 最大化压低调研与工程 Token 开销，杜绝高级配额浪费。 |
+| **冷启动与递归派单阻断** | `PreToolUse` (`invoke_subagent`, `define_subagent`) | 派单时自动注入 `[FLASH-WORKER]` 前缀，解决首轮转录未落盘时的冷启动身份识别；通过转录首行 `SYSTEM`/`SYSTEM_SDK` 特征识别子代理身份，严格阻断子代理再次派单（`deny`）。 | 消除无休止的多层子代理调用死循环，防止冷启动误判。 |
+| **中立契约与自定义守门** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 派单、自定义代理定义（`define_subagent`）及消息追加自动注入 `[FLASH-WORKER]` 与契约：工程子代理必须返回四列表格+自检命令与结果，`research` 调研子代理直接输出结构化摘要无需写文件。`artifactDirectoryPath` 丢失时安全回退至绝对路径 `~/.gemini/antigravity/brain/<convId>`。 | 消除大段源码回贴与只读沙箱写文件异常，防止工作区根目录污染。 |
+| **大文件切片与 Minified 防泄洪** | `PreToolUse` (`read_file`, `view_file`) | 未显式切片读取代码文件（300-800行）时，自动改写参数限制在 [1, 150] 行内；超过 800 行代码或 400 行文档/数据日志直接拦截，引导使用子代理。**防泄洪增强**：即使传入 StartLine/EndLine，若文件 >40KB 且平均行长 >4KB（如压缩 JS/JSON/Minified 数据）一律物理拦截。自动豁免依赖库与 Artifact 目录。 | 消除超大文件撑爆上下文的隐患，杜绝单行压缩数据穿透，小文件切片无需额外轮次。 |
+| **命令防倾倒增强** | `PreToolUse` (`run_command`) | 递归解包多层嵌套 Shell；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。**全模式防倾倒**：覆盖变量赋值（`$content = Get-Content`）、子表达式（`Resolve-Path`）及 .NET 静态方法（`[IO.File]::ReadAllText`）。放行真实文件重定向输出（`>`、`>>`、`| Set-Content`、`> /dev/null`）。 | 杜绝终端海量日志倾倒至对话中，封堵全部管道与代码逃逸手段，同时不影响离线写盘。 |
+| **会话漂移精准感知** | `PreInvocation` | 解析转录滑动窗口，自上次派单以来若连续 4 次直接改动代码文件且未派单，注入单轮即抛的 `ephemeralMessage` 提醒分流。**精准降噪**：运行时模型切为 Flash 时自动停用架构师漂移告警；严格提取 AST/JSONL toolCall 结构体判定，彻底过滤正文讨论中提及 `write_file`/`edit_file` 等字符串字面量的假阳性误报。 | 保持静默，仅在出现注意力漂移时发出无上下文残留的即时告警。 |
 
 ---
 
@@ -156,7 +162,7 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
 ## 自检诊断与决策复盘
 
 ### 1. 自动化自检套件
-运行内置的 63 项端到端及单元测试断言：
+运行内置的 71 项端到端及单元测试断言：
 ```bash
 node scripts/doctor.mjs
 ```
@@ -198,7 +204,7 @@ pro-flash-orchestrator/
 │   ├── guard-subagent.mjs      # 子代理守门（递归拦截、物理降级、中立契约）
 │   ├── guard-read-file.mjs     # 文件读取守门（智能切片、生态豁免）
 │   ├── guard-command.mjs       # 命令守门（多层解包、重定向放行、倾倒拦截）
-│   ├── doctor.mjs              # 63 项全量自检测试套件
+│   ├── doctor.mjs              # 71 项全量自检测试套件
 │   └── report.mjs              # 生产决策聚合与统计复盘
 └── assets/
     └── logo.svg                # 插件图标

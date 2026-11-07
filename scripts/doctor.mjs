@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * doctor.mjs — self-check for pro-flash-orchestrator v3.3.
+ * doctor.mjs — self-check for pro-flash-orchestrator v0.3.
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -16,7 +16,21 @@ import { loadDecisions } from './report.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = path.dirname(SCRIPT_DIR);
-const TMP = path.join(os.tmpdir(), `pro-doctor-${process.pid}`);
+function getDoctorTmpDir() {
+  const preferred = path.join(os.tmpdir(), `pro-doctor-${process.pid}`);
+  try {
+    fs.mkdirSync(preferred, { recursive: true });
+    const probe = path.join(preferred, '.probe');
+    fs.writeFileSync(probe, 'ok', 'utf8');
+    fs.unlinkSync(probe);
+    return preferred;
+  } catch {
+    const fallback = path.join(PLUGIN_DIR, '.state', `tmp-doctor-${process.pid}`);
+    fs.mkdirSync(fallback, { recursive: true });
+    return fallback;
+  }
+}
+const TMP = getDoctorTmpDir();
 
 let passed = 0;
 const failures = [];
@@ -74,7 +88,7 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v3.3 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.3 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('hooks.json 可解析，且引用的脚本都存在', () => {
@@ -228,12 +242,19 @@ check('派单守门：双重编码的 Model（"flash_lite"）不被误升档', (
   assert(!out.overwrite || !out.overwrite.Model, `quoted flash_lite should pass: ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：当前主模型已是 flash 时，subagent 不再降级', () => {
+check('派单守门：当前主模型已是 flash 时，research 子代理仍降级为 flash_lite', () => {
   const payload = dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' });
   payload.modelName = 'Gemini 3.8 Flash (High)';
   const out = runHook('guard-subagent.mjs', payload);
-  assert(!out.overwrite || !out.overwrite.Model, `expected no Model rewrite, got ${out.overwrite && out.overwrite.Model}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash_lite', `expected Model=flash_lite, got ${out.overwrite && out.overwrite.Model}`);
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'contract should still be appended');
+});
+
+check('派单守门：当前主模型已是 flash 时，self 子代理 inherit 不再重复改写 Model', () => {
+  const payload = dispatch({ TypeName: 'self', Model: 'inherit', Prompt: '实现' });
+  payload.modelName = 'Gemini 3.8 Flash (High)';
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(!out.overwrite || !out.overwrite.Model, `expected no Model rewrite, got ${out.overwrite && out.overwrite.Model}`);
 });
 
 check('派单守门：主模型为 flash 时，派单 Model="pro" 仍被降级', () => {
@@ -299,6 +320,44 @@ check('派单守门：send_message 给 Recipient: "user" 不追加契约', () =>
   const payload = basePayload({ toolCall: { name: 'send_message', args: { Recipient: 'user', Message: '这是给用户的回复' } } });
   const out = runHook('guard-subagent.mjs', payload);
   assert(out.decision === 'allow' && !out.overwrite, `expected allow without rewrite, got ${JSON.stringify(out)}`);
+});
+
+check('派单守门：appendContract 自动在开头注入 [FLASH-WORKER] 前缀，确保冷启动 isSubAgent 识别通过', () => {
+  const payload = dispatch({ TypeName: 'self', Model: 'flash', Prompt: '实现用户模块' });
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.overwrite && String(out.overwrite.Prompt).startsWith('[FLASH-WORKER]'), `Prompt should start with [FLASH-WORKER], got: ${out.overwrite && out.overwrite.Prompt}`);
+  const notYetTranscript = path.join(TMP, 'not-yet.jsonl');
+  const subVerdict = isSubAgent({ transcriptPath: notYetTranscript, lastUserInput: out.overwrite.Prompt });
+  assert(subVerdict === true, 'isSubAgent should return true for cold start prompt');
+});
+
+check('派单守门：define_subagent 自动在 SystemPrompt 注入契约与前缀', () => {
+  const payload = basePayload({
+    toolCall: {
+      name: 'define_subagent',
+      args: {
+        Name: 'code-worker',
+        Description: 'worker agent',
+        SystemPrompt: '你是一个代码助手，负责完成单元测试。',
+      },
+    },
+  });
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.decision === 'allow', 'should allow define_subagent');
+  assert(out.overwrite && out.overwrite.SystemPrompt, 'should overwrite SystemPrompt');
+  assert(out.overwrite.SystemPrompt.startsWith('[FLASH-WORKER]'), 'SystemPrompt should start with [FLASH-WORKER]');
+  assert(out.overwrite.SystemPrompt.includes('[PRO-CONTRACT]'), 'SystemPrompt should contain [PRO-CONTRACT]');
+});
+
+check('派单守门：artifactDirectoryPath 缺失时回退到绝对路径 brain/<convId> 而非相对路径', () => {
+  const payload = dispatch({ TypeName: 'self', Model: 'flash', Prompt: '写代码' });
+  delete payload.artifactDirectoryPath;
+  payload.conversationId = 'conv-fallback-123';
+  const out = runHook('guard-subagent.mjs', payload);
+  const prompt = String(out.overwrite && out.overwrite.Prompt);
+  assert(prompt.includes('brain/conv-fallback-123') || prompt.includes('brain\\conv-fallback-123'), `expected brain/conv-fallback-123 in prompt: ${prompt}`);
+  const matched = prompt.match(/`([^`]+)<task>\.report\.md`/);
+  assert(matched && path.isAbsolute(matched[1]), 'contract artifact directory must be an absolute path');
 });
 
 /* --------------------------------------------------------------- read guard */
@@ -404,6 +463,21 @@ check('读取守门：2MB .log 文件被拦截', () => {
   fs.writeFileSync(log2mb, Buffer.alloc(2 * 1024 * 1024, 0x61));
   const out = runHook('guard-read-file.mjs', basePayload({ toolCall: { name: 'read_file', args: { AbsolutePath: log2mb } } }));
   assert(out.decision === 'deny' && /数据\/日志文件/.test(out.reason), `expected deny for 2MB log, got ${JSON.stringify(out)}`);
+});
+
+check('读取守门：单行超大文件（>40KB 且平均行长 >4KB）即使传 StartLine=1, EndLine=2 也被拦截', () => {
+  const singleLineFile = path.join(TMP, 'minified-bundle.js');
+  const content = 'const a = 1;\n' + 'x'.repeat(50 * 1024);
+  fs.writeFileSync(singleLineFile, content, 'utf8');
+  const payload = basePayload({
+    toolCall: {
+      name: 'read_file',
+      args: { AbsolutePath: singleLineFile, StartLine: 1, EndLine: 2 },
+    },
+  });
+  const out = runHook('guard-read-file.mjs', payload);
+  assert(out.decision === 'deny', `expected deny, got: ${JSON.stringify(out)}`);
+  assert(String(out.reason).includes('疑似单行压缩/Minified 数据'), `expected minified reason, got ${out.reason}`);
 });
 
 /* ------------------------------------------------------------ command guard */
@@ -514,6 +588,17 @@ check('命令守门：wsl cat 1MB.log 被拦截', () => {
   assert(out.decision === 'deny', `expected deny, got ${JSON.stringify(out)}`);
 });
 
+check('命令守门：$content = Get-Content 1MB.log、Get-Content (Resolve-Path 1MB.log)、[System.IO.File]::ReadAllText(1MB.log) 均被拦截', () => {
+  const out1 = runHook('guard-command.mjs', basePayload({ toolCall: { name: 'run_command', args: { CommandLine: `$content = Get-Content "${bigLog}"` } } }));
+  assert(out1.decision === 'deny', `$content = Get-Content should be denied, got ${JSON.stringify(out1)}`);
+
+  const out2 = runHook('guard-command.mjs', basePayload({ toolCall: { name: 'run_command', args: { CommandLine: `Get-Content (Resolve-Path "${bigLog}")` } } }));
+  assert(out2.decision === 'deny', `Get-Content (Resolve-Path ...) should be denied, got ${JSON.stringify(out2)}`);
+
+  const out3 = runHook('guard-command.mjs', basePayload({ toolCall: { name: 'run_command', args: { CommandLine: `[System.IO.File]::ReadAllText("${bigLog}")` } } }));
+  assert(out3.decision === 'deny', `[System.IO.File]::ReadAllText should be denied, got ${JSON.stringify(out3)}`);
+});
+
 /* ------------------------------------------------------------ pre-invocation */
 check('漂移提醒：连续改文件不派单时注入一次', () => {
   const transcript = path.join(TMP, 'transcript.jsonl');
@@ -586,6 +671,32 @@ check('漂移提醒：write_file 连续 4 次正确触发漂移提醒', () => {
   const out = runHook('pre-invocation.mjs', basePayload({ conversationId: 'doctor-drift-wf', invocationNum: 10, transcriptPath: transcript }));
   assert(Array.isArray(out.injectSteps) && out.injectSteps.length === 1, `expected 1 step, got ${JSON.stringify(out)}`);
   assert(String(out.injectSteps[0].ephemeralMessage).includes('invoke_subagent'), 'nudge text missing');
+});
+
+check('漂移提醒：当前模型为 Flash 时不触发架构师漂移告警', () => {
+  const transcript = path.join(TMP, 'drift-flash.jsonl');
+  const lines = [
+    '{"toolCall":{"name":"write_to_file"}}',
+    '{"toolCall":{"name":"edit_file"}}',
+    '{"toolCall":{"name":"write_to_file"}}',
+    '{"toolCall":{"name":"edit_file"}}',
+  ];
+  fs.writeFileSync(transcript, `${lines.join('\n')}\n`, 'utf8');
+  const out = runHook('pre-invocation.mjs', basePayload({ conversationId: 'doctor-drift-flash', modelName: 'Gemini 3.8 Flash (High)', invocationNum: 10, transcriptPath: transcript }));
+  assert(!out.injectSteps || out.injectSteps.length === 0, `expected no drift warning when model is flash, got ${JSON.stringify(out)}`);
+});
+
+check('漂移提醒：对话正文中讨论 write_file / edit_file 字面量不计入改文件次数（避免假阳性）', () => {
+  const transcript = path.join(TMP, 'chat-mentions.jsonl');
+  const lines = [
+    JSON.stringify({ source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '请使用 write_file 或 edit_file 来完成任务' }),
+    JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', content: '好的，我了解了 write_file 和 edit_file 的用法。' }),
+    JSON.stringify({ source: 'USER_EXPLICIT', type: 'USER_INPUT', content: '另外 edit_file 和 write_to_file 也可以配合使用' }),
+    JSON.stringify({ source: 'MODEL', type: 'PLANNER_RESPONSE', content: '明白，关于 write_file 的规则我已经记住了。' }),
+  ];
+  fs.writeFileSync(transcript, `${lines.join('\n')}\n`, 'utf8');
+  const out = runHook('pre-invocation.mjs', basePayload({ conversationId: 'doctor-chat-mentions', invocationNum: 10, transcriptPath: transcript }));
+  assert(!out.injectSteps || out.injectSteps.length === 0, `expected no drift warning from chat mentions, got ${JSON.stringify(out)}`);
 });
 
 /* ------------------------------------------------------------------ report */

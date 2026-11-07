@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreToolUse guard for `run_command` (v3.3).
+ * PreToolUse guard for `run_command` (v0.3).
  *
  * `cat requirements.md` bypasses the read guard entirely, so the same flood has
  * to be closed at the shell. The blacklist is deliberately narrow and
@@ -22,8 +22,9 @@ import {
 import fs from 'node:fs';
 
 const DUMP_BYTES = 400 * 1024;
-const UNBOUNDED_READERS = /(?:^|[;&|]\s*)(cat|type|Get-Content|gc|more|less)\b/i;
-const BOUNDED_TAIL = /\|\s*(head|tail)\b|\|\s*Select-Object\s+-First|\|\s*Out-String\s+-Stream|\|\s*more\b/i;
+const UNBOUNDED_READERS = /(?:^|[;&|]\s*|\$\w+\s*=\s*|\(\s*)(cat|type|Get-Content|gc|more|less)\b/i;
+const DOTNET_READERS = /\[(?:System\.)?IO\.File\]::(ReadAllText|ReadAllLines|ReadAllBytes|ReadLines)\s*\(\s*(\([^\)]+\)|"[^"]+"|'[^']+'|[^,)\s]+)/i;
+const BOUNDED_TAIL = /\|\s*(head|tail)\b|\|\s*Select-Object\s+-(?:First|Last)\b|\|\s*Out-String\s+-Stream|\|\s*more\b/i;
 const BOUNDED_FLAG = /(^|\s)-(TotalCount|Tail|First|Last|Head)\b/i;
 const SAFE_SINK_PIPE = /\|\s*(?:Set-Content|Add-Content|sc|ac|Out-File|Out-Null)\b/i;
 const REDIRECT_TARGET = /(?<!2)(?:1?>>|1?>|&>)\s*(?!&[12]\b)(?:["'][^"']+["']|\$null\b|\/dev\/null\b|NUL\b|[^\s|;&<>]+)/i;
@@ -146,7 +147,28 @@ export function unwrapCommand(command) {
   return cmd;
 }
 
+function cleanSubExpression(raw) {
+  let s = unquote(raw);
+  const subExpr = s.match(/^\(\s*(?:Resolve-Path|Convert-Path|Get-Item|gi|gp)\s+(?:-(?:Path|LiteralPath)\s+)?("[^"]+"|'[^']+'|[^)\s]+)\s*\)$/i);
+  if (subExpr) return unquote(subExpr[1]);
+  if (s.startsWith('(') && s.endsWith(')')) {
+    s = unquote(s.slice(1, -1).trim());
+  }
+  return s;
+}
+
 function extractDumpTarget(command) {
+  const dotnetMatch = command.match(DOTNET_READERS);
+  if (dotnetMatch) {
+    const rest = command.slice(dotnetMatch.index + dotnetMatch[0].length);
+    const stmtMatch = rest.match(/^(?:(?![;&]|&&|\|\|)[\s\S])*/);
+    const readerStmt = stmtMatch ? stmtMatch[0] : rest;
+    if (SAFE_SINK_PIPE.test(readerStmt) || REDIRECT_TARGET.test(readerStmt)) {
+      return null;
+    }
+    return { reader: `[IO.File]::${dotnetMatch[1]}`, rawPath: cleanSubExpression(dotnetMatch[2]) };
+  }
+
   const match = command.match(UNBOUNDED_READERS);
   if (!match) return null;
   const reader = match[1];
@@ -161,13 +183,19 @@ function extractDumpTarget(command) {
 
   const subCmd = rest.split(/[|;&<>]/)[0].trim();
 
-  // 1. Explicit -Path or -LiteralPath (PowerShell syntax)
-  const flagMatch = subCmd.match(/(?:^|\s)-(?:Path|LiteralPath)\s+("[^"]+"|'[^']+'|[^\s]+)/i);
-  if (flagMatch) {
-    return { reader, rawPath: unquote(flagMatch[1]) };
+  // 1. Sub-expression like (Resolve-Path "big.log")
+  const subExprMatch = subCmd.match(/(?:^|\s|-(?:Path|LiteralPath)\s+)(\(\s*(?:Resolve-Path|Convert-Path|Get-Item|gi|gp)\s+[^)]+\))/i);
+  if (subExprMatch) {
+    return { reader, rawPath: cleanSubExpression(subExprMatch[1]) };
   }
 
-  // 2. Positional target path, skipping flags (e.g. -Raw, /b, -n)
+  // 2. Explicit -Path or -LiteralPath (PowerShell syntax)
+  const flagMatch = subCmd.match(/(?:^|\s)-(?:Path|LiteralPath)\s+("[^"]+"|'[^']+'|[^\s]+)/i);
+  if (flagMatch) {
+    return { reader, rawPath: cleanSubExpression(flagMatch[1]) };
+  }
+
+  // 3. Positional target path, skipping flags (e.g. -Raw, /b, -n)
   const tokenRegex = /"[^"]+"|'[^']+'|[^\s]+/g;
   let tokenMatch;
   while ((tokenMatch = tokenRegex.exec(subCmd)) !== null) {
@@ -178,7 +206,7 @@ function extractDumpTarget(command) {
       }
       continue;
     }
-    return { reader, rawPath: unquote(token) };
+    return { reader, rawPath: cleanSubExpression(token) };
   }
   return null;
 }
