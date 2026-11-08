@@ -31,7 +31,7 @@ const NAG_STEP_COOLDOWN = 4; // minimum transcript steps between two drift nudge
 const WARN_STEP_COOLDOWN = 12; // minimum transcript steps between compaction warnings
 const WAKEUP_MIN_STEPS = 8; // start turn-boundary ephemeral wake-ups after early turns
 const PRESSURE_BYTES = 4 * 1024 * 1024;
-const TAIL_BYTES = 512 * 1024;
+const TAIL_BYTES = 64 * 1024;
 const WRITE_TOOL_CALL_RE = /"name"\s*:\s*"(?:write_file|write_to_file|edit_file|multi_replace_file_content|replace_file_content)"/g;
 const DISPATCH_TOOL_CALL_RE = /"name"\s*:\s*"(?:invoke_subagent|send_message)"/;
 
@@ -67,7 +67,7 @@ if (mode === 'off' || isSubAgent(payload)) {
   if (transcriptBytes > 0 && !isCurrentModelFlash) {
     try {
       const tail = readTail(transcriptPath, TAIL_BYTES);
-      const lines = tail.split(/\r?\n/).filter(Boolean).slice(-400);
+      const lines = tail.split(/\r?\n/).filter(Boolean).slice(-60);
       globalStep = lines.length;
 
       for (const line of lines) {
@@ -197,7 +197,9 @@ if (mode === 'off' || isSubAgent(payload)) {
     });
   }
 
-  writeSession(conversationId, state);
+  if (isNewUserTurn || steps.length > 0) {
+    writeSession(conversationId, state);
+  }
 
   if (steps.length > 0) {
     logDecision({

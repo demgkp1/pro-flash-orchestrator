@@ -22,18 +22,18 @@ import {
   currentMode,
   fileInfo,
   getArgs,
+  isExemptPath,
   isSubAgent,
   lastUserInput,
   logDecision,
   mentions,
   output,
+  pickPath,
   readPayload,
-  readSession,
   resolvePath,
   setContext,
   toolName,
   updateSession,
-  writeSession,
 } from './lib.mjs';
 
 const READ_TOOLS = new Set(['read_file', 'view_file', 'view_content_chunk']);
@@ -59,25 +59,6 @@ const CODE_EXT = new Set([
 const DOC_EXT = new Set(['.md', '.markdown', '.mdx', '.txt', '.rst', '.adoc', '.pdf', '.doc', '.docx', '.odt', '.rtf', '.tex']);
 const DATA_EXT = new Set(['.log', '.csv', '.tsv', '.jsonl', '.ndjson', '.out']);
 
-const EXEMPT_SEGMENTS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.nuxt', '.cache', 'vendor', '__pycache__',
-  'venv', '.venv', '.tox', 'target', '.yarn', '.pnpm-store',
-]);
-const EXEMPT_BASENAMES = new Set([
-  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'composer.lock',
-  'changelog.md', 'license', 'license.md', 'notice',
-]);
-const EXEMPT_SUFFIXES = ['.min.js', '.min.css', '.map', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico'];
-
-function pickPath(args) {
-  const keys = ['AbsolutePath', 'AbsolutePathUri', 'Path', 'FilePath', 'TargetFile', 'TargetFileUri', 'Uri', 'absolutePath'];
-  for (const key of keys) {
-    const value = args[key];
-    if (value && typeof value === 'string') return value;
-  }
-  return '';
-}
-
 function pickNumber(args, keys) {
   for (const key of keys) {
     const raw = args[key];
@@ -86,44 +67,6 @@ function pickNumber(args, keys) {
     if (Number.isFinite(n) && n >= 1) return Math.floor(n);
   }
   return null;
-}
-
-function isExemptPath(file, payload) {
-  const lower = file.toLowerCase();
-  const segments = lower.split(/[\\/]+/);
-  if (segments.some((segment) => EXEMPT_SEGMENTS.has(segment))) return true;
-  if (
-    lower.includes('/.gemini/antigravity/') ||
-    lower.includes('\\.gemini\\antigravity\\') ||
-    lower.includes('/.gemini/antigravity-cli/') ||
-    lower.includes('\\.gemini\\antigravity-cli\\') ||
-    lower.includes('/.gemini/antigravity-ide/') ||
-    lower.includes('\\.gemini\\antigravity-ide\\') ||
-    lower.includes('/.system_generated/') ||
-    lower.includes('\\.system_generated\\')
-  ) {
-    return true;
-  }
-  if (
-    (lower.includes('pro-flash-orchestrator') || lower.includes('argon-flash-orchestrator')) &&
-    lower.includes('.state')
-  ) {
-    return true;
-  }
-  const rawArtifactDir = String((payload && payload.artifactDirectoryPath) || '').trim();
-  if (rawArtifactDir) {
-    try {
-      const normArtifact = path.resolve(rawArtifactDir);
-      const normFile = path.resolve(file);
-      const rel = path.relative(normArtifact, normFile);
-      if (!rel.startsWith('..') && !path.isAbsolute(rel)) return true;
-    } catch {
-      /* ignore */
-    }
-  }
-  const base = basenameOf(file);
-  if (EXEMPT_BASENAMES.has(base)) return true;
-  return EXEMPT_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
 function decide() {
@@ -164,25 +107,10 @@ function decide() {
     end,
   };
 
-  let recordNormFile = null;
-  let convId = '';
-  let state = null;
-  let readList = [];
-
   /**
    * @param {{deny?: boolean, reason?: string, overwrite?: object}} result
    */
   const finish = ({ deny = false, reason = '', overwrite = null } = {}) => {
-    if (!deny && recordNormFile && convId) {
-      updateSession(convId, (s) => {
-        const list = Array.isArray(s.readsSinceDispatch) ? s.readsSinceDispatch : [];
-        if (!list.includes(recordNormFile)) {
-          list.push(recordNormFile);
-        }
-        s.readsSinceDispatch = list;
-        return s;
-      });
-    }
     const action = deny
       ? mode === 'enforce' ? 'deny' : 'would-deny'
       : overwrite
@@ -199,35 +127,6 @@ function decide() {
   if (sub || !info.exists || isExemptPath(file, payload)) return finish();
   if (mentions(payload, '[ALLOW-READ]') || (base.length >= 5 && mentions(payload, base))) return finish();
 
-  if (CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext)) {
-    convId = String(payload.conversationId || 'unknown');
-    state = readSession(convId);
-    const uInput = lastUserInput(payload).trim();
-    if (uInput && uInput !== state.lastReadUserInput) {
-      updateSession(convId, (s) => {
-        s.lastReadUserInput = uInput;
-        s.readsSinceDispatch = [];
-        return s;
-      });
-      state = readSession(convId);
-    }
-    readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
-    const normFile = path.normalize(file);
-    if (!readList.includes(normFile)) {
-      const maxLimit = (state && state.maxReadsAllowed) ? state.maxReadsAllowed : 3;
-      if (readList.length >= maxLimit) {
-        return finish({
-          deny: true,
-          reason:
-            `【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 ${maxLimit} 个不同文件（` +
-            readList.map((p) => path.basename(p)).join(', ') +
-            '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
-        });
-      }
-      recordNormFile = normFile;
-    }
-  }
-
   /* binary / absurd size ------------------------------------------------ */
   if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {
     return finish({
@@ -236,7 +135,7 @@ function decide() {
     });
   }
 
-  /* explicit slice: only clamp the span --------------------------------- */
+  /* explicit slice: check minified flood and unsliceable tools ---------- */
   if (hasSlice) {
     // Guard against single-line / minified flood: if average line length > 4KB
     // and total file exceeds 40KB, line-based slicing cannot bound token volume.
@@ -248,54 +147,104 @@ function decide() {
     }
     const from = start ?? 1;
     const to = end ?? from + MAX_SPAN - 1;
-    if (to - from + 1 <= MAX_SPAN) {
-      // StartLine without EndLine reads to EOF, so pin the implicit end.
-      return end === null ? finish({ overwrite: { EndLine: to } }) : finish();
-    }
-    if (!SLICE_CAPABLE.has(tool)) {
+    if (to - from + 1 > MAX_SPAN && !SLICE_CAPABLE.has(tool)) {
       return finish({
         deny: true,
         reason: `【读取守门】切片跨度 ${to - from + 1} 行，超过单次 ${MAX_SPAN} 行上限，请缩小区间。`,
       });
     }
+  } else {
+    /* unsliced read of a code file -------------------------------------- */
+    if (CODE_EXT.has(ext)) {
+      if ((info.bytes || 0) > CODE_HARD_BYTES || info.lines > CODE_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
+        });
+      }
+    }
+
+    /* unsliced read of a document --------------------------------------- */
+    if (DOC_EXT.has(ext)) {
+      if ((info.bytes || 0) > DOC_HARD_BYTES || info.lines > DOC_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+        });
+      }
+    }
+
+    /* unsliced read of a data / log file -------------------------------- */
+    if (DATA_EXT.has(ext)) {
+      if ((info.bytes || 0) > DATA_HARD_BYTES || info.lines > DATA_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
+        });
+      }
+    }
+  }
+
+  /* multi-file continuous read quota check (single session transaction) - */
+  if (CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext)) {
+    const convId = String(payload.conversationId || 'unknown');
+    const uInput = lastUserInput(payload).trim();
+    const normFile = path.normalize(file);
+    let shouldDenyQuota = false;
+    let currentReads = [];
+    let quotaLimit = 3;
+
+    updateSession(convId, (state) => {
+      if (uInput && uInput !== state.lastReadUserInput) {
+        state.lastReadUserInput = uInput;
+        state.readsSinceDispatch = [];
+      }
+      const readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
+      currentReads = readList;
+      const maxLimit = state.maxReadsAllowed || 3;
+      quotaLimit = maxLimit;
+      if (!readList.includes(normFile)) {
+        if (readList.length >= maxLimit) {
+          shouldDenyQuota = true;
+          return state;
+        }
+        readList.push(normFile);
+        state.readsSinceDispatch = readList;
+      }
+      return state;
+    });
+
+    if (shouldDenyQuota) {
+      return finish({
+        deny: true,
+        reason:
+          `【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 ${quotaLimit} 个不同文件（` +
+          currentReads.map((p) => path.basename(p)).join(', ') +
+          '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
+      });
+    }
+  }
+
+  /* explicit slice: clamp the span -------------------------------------- */
+  if (hasSlice) {
+    const from = start ?? 1;
+    const to = end ?? from + MAX_SPAN - 1;
+    if (to - from + 1 <= MAX_SPAN) {
+      // StartLine without EndLine reads to EOF, so pin the implicit end.
+      return end === null ? finish({ overwrite: { EndLine: to } }) : finish();
+    }
     return finish({ overwrite: { StartLine: from, EndLine: from + MAX_SPAN - 1 } });
   }
 
-  /* unsliced read of a code file ---------------------------------------- */
+  /* unsliced read of a code file (soft slice) --------------------------- */
   if (CODE_EXT.has(ext)) {
-    if ((info.bytes || 0) > CODE_HARD_BYTES || info.lines > CODE_HARD_LINES) {
-      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
-      return finish({
-        deny: true,
-        reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
-      });
-    }
     if ((info.bytes || 0) > CODE_SOFT_BYTES || info.lines > CODE_SOFT_LINES) {
       return finish({ overwrite: { StartLine: 1, EndLine: MAX_SPAN } });
     }
     return finish();
-  }
-
-  /* unsliced read of a document ----------------------------------------- */
-  if (DOC_EXT.has(ext)) {
-    if ((info.bytes || 0) > DOC_HARD_BYTES || info.lines > DOC_HARD_LINES) {
-      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
-      return finish({
-        deny: true,
-        reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
-      });
-    }
-  }
-
-  /* unsliced read of a data / log file ---------------------------------- */
-  if (DATA_EXT.has(ext)) {
-    if ((info.bytes || 0) > DATA_HARD_BYTES || info.lines > DATA_HARD_LINES) {
-      const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
-      return finish({
-        deny: true,
-        reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
-      });
-    }
   }
 
   return finish();

@@ -9,9 +9,9 @@
  * It must not fire inside a sub-agent: a flash worker told "you are Argon the
  * architect" would start delegating (and gets blocked by guard-subagent).
  */
-import { currentMode, isSubAgent, logDecision, output, readPayload, setContext } from './lib.mjs';
+import { currentMode, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, setContext } from './lib.mjs';
 
-const RULES = '[Pro-Flash Orchestrator] 会话已接管。主创架构师与 Flash 助手职责划分及分流红线由常驻 AGENTS.md 规定，请严格遵循。';
+const RULES = '[Pro-Flash Orchestrator Active]';
 
 const CARD = [
   '**Pro-Flash Orchestrator v0.3.2 已接管本会话**',
@@ -29,6 +29,7 @@ const CARD = [
 
 const payload = readPayload();
 setContext(payload);
+pruneStaleSessions();
 const mode = currentMode();
 
 if (mode === 'off') {

@@ -14,11 +14,13 @@ import {
   basenameOf,
   currentMode,
   getArgs,
+  isExemptPath,
   isSubAgent,
   lastUserInput,
   logDecision,
   mentions,
   output,
+  pickPath,
   readPayload,
   readSession,
   resolvePath,
@@ -36,68 +38,6 @@ const WRITE_TOOLS = new Set([
   'replace_file_content',
   'multi_replace_file_content',
 ]);
-
-const EXEMPT_SEGMENTS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.nuxt', '.cache', 'vendor', '__pycache__',
-  'venv', '.venv', '.tox', 'target', '.yarn', '.pnpm-store',
-]);
-const EXEMPT_BASENAMES = new Set([
-  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'composer.lock',
-  'changelog.md', 'license', 'license.md', 'notice',
-]);
-const EXEMPT_SUFFIXES = ['.min.js', '.min.css', '.map', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico'];
-
-function pickPath(args) {
-  const keys = ['AbsolutePath', 'AbsolutePathUri', 'Path', 'FilePath', 'TargetFile', 'TargetFileUri', 'Uri', 'absolutePath'];
-  for (const key of keys) {
-    const value = args[key];
-    if (value && typeof value === 'string') return value;
-  }
-  return '';
-}
-
-function isExemptPath(file, payload) {
-  const lower = file.toLowerCase();
-  const segments = lower.split(/[\\/]+/);
-  if (segments.some((segment) => EXEMPT_SEGMENTS.has(segment))) return true;
-  if (
-    lower.includes('/.gemini/antigravity/') ||
-    lower.includes('\\.gemini\\antigravity\\') ||
-    lower.includes('/.gemini/antigravity-cli/') ||
-    lower.includes('\\.gemini\\antigravity-cli\\') ||
-    lower.includes('/.gemini/antigravity-ide/') ||
-    lower.includes('\\.gemini\\antigravity-ide\\') ||
-    lower.includes('/.system_generated/') ||
-    lower.includes('\\.system_generated\\')
-  ) {
-    return true;
-  }
-  try {
-    const normState = path.resolve(STATE_DIR);
-    const normFile = path.resolve(file);
-    const rel = path.relative(normState, normFile);
-    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
-      if (basenameOf(file) === 'mode.json') return false;
-      return true;
-    }
-  } catch {
-    /* ignore */
-  }
-  const rawArtifactDir = String((payload && payload.artifactDirectoryPath) || '').trim();
-  if (rawArtifactDir) {
-    try {
-      const normArtifact = path.resolve(rawArtifactDir);
-      const normFile = path.resolve(file);
-      const rel = path.relative(normArtifact, normFile);
-      if (!rel.startsWith('..') && !path.isAbsolute(rel)) return true;
-    } catch {
-      /* ignore */
-    }
-  }
-  const base = basenameOf(file);
-  if (EXEMPT_BASENAMES.has(base)) return true;
-  return EXEMPT_SUFFIXES.some((suffix) => lower.endsWith(suffix));
-}
 
 function decide() {
   const payload = readPayload();

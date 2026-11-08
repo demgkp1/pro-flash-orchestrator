@@ -407,10 +407,22 @@ export function currentMode() {
   return 'enforce';
 }
 
+let initializedStateDir = '';
+
 export function ensureStateDir() {
+  if (initializedStateDir === STATE_DIR) return;
   try {
     fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
     fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
+    initializedStateDir = STATE_DIR;
+  } catch {
+    /* read-only install: logging becomes a no-op */
+  }
+}
+
+export function pruneStaleSessions() {
+  try {
+    ensureStateDir();
     const now = Date.now();
     const maxAgeMs = 14 * 24 * 60 * 60 * 1000;
     const files = fs.readdirSync(SESSION_DIR);
@@ -427,8 +439,73 @@ export function ensureStateDir() {
       }
     }
   } catch {
-    /* read-only install: logging becomes a no-op */
+    /* ignore */
   }
+}
+
+/* ------------------------------------------------------------------- exemptions & path */
+
+export const EXEMPT_SEGMENTS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', '.next', '.nuxt', '.cache', 'vendor', '__pycache__',
+  'venv', '.venv', '.tox', 'target', '.yarn', '.pnpm-store',
+]);
+export const EXEMPT_BASENAMES = new Set([
+  'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock', 'cargo.lock', 'go.sum', 'poetry.lock', 'composer.lock',
+  'changelog.md', 'license', 'license.md', 'notice',
+]);
+export const EXEMPT_SUFFIXES = ['.min.js', '.min.css', '.map', '.svg', '.png', '.jpg', '.jpeg', '.gif', '.webp', '.ico'];
+
+export function pickPath(args) {
+  const keys = ['AbsolutePath', 'AbsolutePathUri', 'Path', 'FilePath', 'TargetFile', 'TargetFileUri', 'Uri', 'absolutePath'];
+  for (const key of keys) {
+    const value = args && args[key];
+    if (value && typeof value === 'string') return value;
+  }
+  return '';
+}
+
+export function isExemptPath(file, payload) {
+  if (!file || typeof file !== 'string') return false;
+  const lower = file.toLowerCase();
+  const segments = lower.split(/[\\/]+/);
+  if (segments.some((segment) => EXEMPT_SEGMENTS.has(segment))) return true;
+  if (
+    lower.includes('/.gemini/antigravity/') ||
+    lower.includes('\\.gemini\\antigravity\\') ||
+    lower.includes('/.gemini/antigravity-cli/') ||
+    lower.includes('\\.gemini\\antigravity-cli\\') ||
+    lower.includes('/.gemini/antigravity-ide/') ||
+    lower.includes('\\.gemini\\antigravity-ide\\') ||
+    lower.includes('/.system_generated/') ||
+    lower.includes('\\.system_generated\\')
+  ) {
+    return true;
+  }
+  try {
+    const normState = path.resolve(STATE_DIR);
+    const normFile = path.resolve(file);
+    const rel = path.relative(normState, normFile);
+    if (!rel.startsWith('..') && !path.isAbsolute(rel)) {
+      if (basenameOf(file) === 'mode.json') return false;
+      return true;
+    }
+  } catch {
+    /* ignore */
+  }
+  const rawArtifactDir = String((payload && payload.artifactDirectoryPath) || '').trim();
+  if (rawArtifactDir) {
+    try {
+      const normArtifact = path.resolve(rawArtifactDir);
+      const normFile = path.resolve(file);
+      const rel = path.relative(normArtifact, normFile);
+      if (!rel.startsWith('..') && !path.isAbsolute(rel)) return true;
+    } catch {
+      /* ignore */
+    }
+  }
+  const base = basenameOf(file);
+  if (EXEMPT_BASENAMES.has(base)) return true;
+  return EXEMPT_SUFFIXES.some((suffix) => lower.endsWith(suffix));
 }
 
 /* ------------------------------------------------------------------- logs */
@@ -451,6 +528,7 @@ export function setContext(payload) {
 }
 
 export function logDecision(entry) {
+  if (entry && entry.action === 'pass' && entry.mode !== 'shadow' && !process.env.PRO_LOG_PASS) return;
   try {
     ensureStateDir();
     const conv = CTX && CTX.conversationId ? String(CTX.conversationId).slice(0, 8) : '';
