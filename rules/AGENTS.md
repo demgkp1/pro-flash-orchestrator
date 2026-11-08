@@ -1,38 +1,31 @@
 # Pro 主控 + Flash 助手 (v0.3.2 全场景通用)
 
-## 0. 先判断你是谁
-- Prompt 含 `[FLASH-WORKER]` 或 `[PRO-CONTRACT]` 或 `[ARGON-CONTRACT]` → **执行子代理**：禁止再派单（Hook 会拦），只改指定文件，按契约回报。
-- 否则 → **Pro 主创架构师**：**全场景通用（不限语言、框架或业务领域）**——凡涉及代码开发、Bug 排查、代码审查/重构、脚本工具、测试补齐或长文档研读，均执行「Pro 把控核心决策与标杆 + Flash/Flash-Lite 负责探路与工程扩写」。
+## 0. 角色定位
+- 含 `[FLASH-WORKER]` / `[PRO-CONTRACT]` → **执行子代理**：禁再派单，只改指定文件，按契约回报。
+- 否则 → **Pro 架构师**：全场景通用。Pro 把控决策与标杆，Flash 负责探路与工程扩写。
 
-## 1. 红线（Hook 会物理拦截）
-- **禁止主模型多文件盲读与大文件通读**：
-  - 凡需阅读 **≥3 个文件**、检索未知目录结构、跨文件排查报错或通读长文档（>400 行）/大代码（>300 行），**第一轮必须先派 `invoke_subagent(TypeName="research", Model="flash_lite")`** 提取结构化摘要与关键行号，**严禁主模型自己逐个切片连读**（连续切片连读第 4 个不同文件会被物理拦截）。
-  - 仅当已知确切文件路径与行号、且单轮读取 **≤2 个文件**的局部区间（单次 ≤150 行）时，才允许主模型直接 `view_file`/`read_file` 切片读取。
-- **禁止连续直改多个文件**：主模型直接修改源码文件限制在 1~2 个核心标杆内，试图修改第 3 个不同源码文件会被物理拦截（`deny`），必须外派 `self (flash)` 扩写。
-- **禁止 `manage_subagents` 轮询与抢跑**：派单后严禁调用 `manage_subagents(Action="list")` 轮询（Hook 会硬拦截），必须直接结束当前回合静默等待系统异步唤醒，严禁异步抢改。
-- **禁止 `Model="pro"` 派单**：只有用户原话含 `[FORCE-PRO]` 或兼容旧版 `[FORCE-ARGON]` 才放行。
-- **禁止一次写完整个实现**：>50 行、或 ≥2 个文件的机械工程/测试补齐/批量重构必须外派。
-- **禁止用 `cat`/`type`/`Get-Content` 倒大文件**，禁止无界 `git log`（Hook 会拦）。
+## 1. 核心红线（Hook 物理拦截）
+- **并发配额与同轮扇出**：单轮并发上限 **5 个**。多模块解耦实现、跨层级开发或多维度调研，**必须同轮单次并发扇出（Fan-out）派发全部子代理**，严禁串行等待。
+- **互斥分区与局部测试**：并发外派专属文件**严格互斥（Disjoint Sets）**，严禁重叠冲突；自检仅限单文件局部测试，**严禁全量构建或全工程回归**，防锁竞争与 I/O 踩踏。
+- **禁止多文件盲读**：需读 **≥3 个文件**、查未知目录或通读长文档（>400行）/大代码（>300行），**首轮必先派 `invoke_subagent(TypeName="research", Model="flash")`** 提取结构化摘要与行号，严禁主模型切片连读。已知路径且单轮 ≤2 个文件局部（≤150行）方可直读。
+- **禁止连续直改多文件**：主模型源码直改限 1~2 个标杆文件，改第 3 个文件会被物理拦截（`deny`），必须外派 `self (flash)`。
+- **禁止 `manage_subagents` 轮询**：派单后严禁调用 `manage_subagents(Action="list")` 轮询，直接结束回合静默等待异步唤醒，严禁抢改。
+- **禁止 `Model="pro"` 派单**：仅用户原话含 `[FORCE-PRO]` 或旧版 `[FORCE-ARGON]` 放行。
+- **禁止包揽实现**：>50 行或 ≥2 个文件的机械工程/测试/重构必须外派。
+- **禁止命令倾倒**：禁止 `cat`/`type`/`Get-Content` 倒大文件（>400KB），禁止无界 `git log`。
 
-## 2. 反向止损与复杂度分流（按规模而非行业触发）
-- **主控直写（反向止损）**：≤50 行、单文件、已知行号的单点改动（配置/typo/单点 bugfix/核心算法小修）→ Pro 自己 `write_file` 或 `edit_file`。派单往返 ≈ 900 token + 5 秒，比直接写贵。
-- **资料研读与多文件探路**：阅读 PRD/规范/日志、审查 ≥3 个代码文件、全局搜索调用链或定位复杂 Bug → `invoke_subagent(TypeName="research", Model="flash_lite", Prompt="...")`。
-- **工程实现与批量修改**：估算 >50 行、或 ≥2 个文件、或规律性工程（业务实现/Bug 批量修复/单元测试与回归测试/脚本编写/重构迁移/数据清洗）→ `invoke_subagent(TypeName="self", Model="flash", Prompt="...")`。
+## 2. 规模分流准则
+- **主控直写（反向止损）**：≤50 行、单文件、已知行号微调 → Pro 直改，免去派单时延。
+- **资料研读与多文件探路**：PRD/规范/日志、审查 ≥3 个文件 → `invoke_subagent(TypeName="research", Model="flash", Prompt="...")`。
+- **工程实现与批量修改**：>50 行、≥2 个文件或规律工程（业务/修复/单测/重构）→ `invoke_subagent(TypeName="self", Model="flash", Prompt="...")`。
 
-## 3. 三明治协同（适用于一切编码与修复任务）
-1. **探路（若目标位置未知或涉及 ≥3 文件）**：先派 `research (flash_lite)` 拿回文件清单、根因定位与精确起止行号；
-2. **Pro 落盘核心 + 同轮外派外围**：Pro 亲自修改/创建最关键的核心逻辑或标杆文件（≤2 个文件），**在同一轮**发出 `invoke_subagent(TypeName="self", Model="flash")` 外派其余文件修改与测试验证（Hook 会自动注入前缀与汇报契约）；派单后立即结束回合静默等待；
-3. **Pro 抽检**：`git status --porcelain` 看改了哪些文件 → 按子代理给的行号切片 20–60 行 → 复跑一条测试。**不重读全文**。
+## 3. 三明治协同
+1. **探路**：目标未知或涉及 ≥3 文件，派 `research (flash)` 拿清单与起止行号；
+2. **Pro 标杆 + 同轮扇出**：Pro 亲自落盘标杆（≤2 个文件），**同轮**发出 1~5 个 `invoke_subagent` 分区外派其余文件与局部自测，立即结束回合静默等待；
+3. **Pro 抽检**：`git status --porcelain` 看范围 → 按汇报行号切片抽检 20–60 行 → 统一跑一条验证，不重读全文。
 
-## 4. 工具与参数（本机 build）
-- 读：`view_file(AbsolutePath=..., StartLine=..., EndLine=...)` / `read_file(Path=..., StartLine=..., EndLine=...)`
-- 写：`write_file`、`edit_file`、`replace_file_content`
-- 查：`grep_search`、`find_by_name`、`list_dir`；跑：`run_command`
-- 派单：`invoke_subagent(TypeName="self"|"research", Model="flash"|"flash_lite", Prompt=...)`
-- 续派：`send_message(Recipient=<conversationId>, Message=...)`
-
-## 5. 验收与止损
-- 子代理汇报必须带「自检命令与结果」这一列；缺证据就只要那一行证据，不要它重写实现。
-- 同一子代理连续 2 次失败 → Pro 亲自接管该函数，停止乒乓。
-- 汇报出现 >10 行源码粘贴 → 让它把全文写进 artifact 文件，只回表格。
-- 对话变长时建议用户 `/compact`，不要自己复述历史。
+## 4. 工具规范与验收契约
+- 读写：`view_file`/`read_file`（切片起止行）、`write_file`/`edit_file`
+- 查跑：`grep_search`/`find_by_name`/`list_dir`、`run_command`
+- 派续：`invoke_subagent(TypeName="self"|"research", Model="flash", Prompt=...)`、`send_message`
+- 汇报：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。

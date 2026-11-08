@@ -168,14 +168,14 @@ if (mode === 'off' || isSubAgent(payload)) {
     state.lastNagInvocation = invocationNum;
     steps.push({
       ephemeralMessage:
-        '[Pro-Flash 轮次唤醒] 新需求开始：凡需读 ≥3 个文件或跨文件排查报错，第一轮必须先派 invoke_subagent(TypeName="research", Model="flash_lite")（严禁逐个切片连读）；凡改 ≥2 个文件或 >50 行代码，必须外派 invoke_subagent(TypeName="self", Model="flash") 或 send_message 续派；派单后请直接结束回合静默等待异步通知，严禁轮询或抢改。',
+        '[Pro-Flash 轮次唤醒] 凡需读≥3个文件请派 invoke_subagent(TypeName="research", Model="flash")；改≥2个文件或>50行请派 invoke_subagent(TypeName="self", Model="flash")。派单后静默等待通知。',
     });
   } else if (!isCurrentModelFlash && cooled && (writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
     /* ---------------------------------------------------- 2. mid-turn drift */
     state.lastNagStep = globalStep;
     state.lastNagInvocation = invocationNum;
     steps.push({
-      ephemeralMessage: `[Pro-Flash 漂移提醒] 自上次派单以来你已直接读取 ${reads} 个不同文件、改写 ${writes} 次文件。请立即停止单刷，将检索探路派给 invoke_subagent(TypeName="research", Model="flash_lite")，将编码修改与测试派给 invoke_subagent(TypeName="self", Model="flash")（或 send_message 续派），派单后立即结束回合等待异步通知。`,
+      ephemeralMessage: `[Pro-Flash 漂移提醒] 已直读 ${reads} 个文件、改写 ${writes} 次文件。请立即派 invoke_subagent(TypeName="research"|"self", Model="flash") 协作，派单后静默等待通知。`,
     });
   }
 

@@ -8,10 +8,10 @@
  *   `overwrite` it into a slice (zero extra round-trip) and only `deny` when
  *   the file is big enough that delegation clearly pays off.
  *
- * Policy (main agent only — sub-agents are exempt, or flash_lite could never
+ * Policy (main agent only — sub-agents are exempt, or flash could never
  * read the PRD it was dispatched to read):
  *   code, no slice, > 300 lines / 12 KB  -> slice [1, 150]
- *   code, no slice, > 800 lines / 40 KB  -> deny, delegate to flash_lite
+ *   code, no slice, > 800 lines / 40 KB  -> deny, delegate to flash
  *   doc,  no slice, > 400 lines / 30 KB  -> deny, extract outline / delegate
  *   any slice with span > 150            -> clamp EndLine to start + 149
  */
@@ -32,6 +32,7 @@ import {
   resolvePath,
   setContext,
   toolName,
+  updateSession,
   writeSession,
 } from './lib.mjs';
 
@@ -111,8 +112,14 @@ function isExemptPath(file, payload) {
   }
   const rawArtifactDir = String((payload && payload.artifactDirectoryPath) || '').trim();
   if (rawArtifactDir) {
-    const artifactDir = path.normalize(rawArtifactDir).toLowerCase();
-    if (path.normalize(file).toLowerCase().startsWith(artifactDir)) return true;
+    try {
+      const normArtifact = path.resolve(rawArtifactDir);
+      const normFile = path.resolve(file);
+      const rel = path.relative(normArtifact, normFile);
+      if (!rel.startsWith('..') && !path.isAbsolute(rel)) return true;
+    } catch {
+      /* ignore */
+    }
   }
   const base = basenameOf(file);
   if (EXEMPT_BASENAMES.has(base)) return true;
@@ -166,10 +173,15 @@ function decide() {
    * @param {{deny?: boolean, reason?: string, overwrite?: object}} result
    */
   const finish = ({ deny = false, reason = '', overwrite = null } = {}) => {
-    if (!deny && recordNormFile && state) {
-      readList.push(recordNormFile);
-      state.readsSinceDispatch = readList;
-      writeSession(convId, state);
+    if (!deny && recordNormFile && convId) {
+      updateSession(convId, (s) => {
+        const list = Array.isArray(s.readsSinceDispatch) ? s.readsSinceDispatch : [];
+        if (!list.includes(recordNormFile)) {
+          list.push(recordNormFile);
+        }
+        s.readsSinceDispatch = list;
+        return s;
+      });
     }
     const action = deny
       ? mode === 'enforce' ? 'deny' : 'would-deny'
@@ -192,19 +204,24 @@ function decide() {
     state = readSession(convId);
     const uInput = lastUserInput(payload).trim();
     if (uInput && uInput !== state.lastReadUserInput) {
-      state.lastReadUserInput = uInput;
-      state.readsSinceDispatch = [];
+      updateSession(convId, (s) => {
+        s.lastReadUserInput = uInput;
+        s.readsSinceDispatch = [];
+        return s;
+      });
+      state = readSession(convId);
     }
     readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
     const normFile = path.normalize(file);
     if (!readList.includes(normFile)) {
-      if (readList.length >= 3) {
+      const maxLimit = (state && state.maxReadsAllowed) ? state.maxReadsAllowed : 3;
+      if (readList.length >= maxLimit) {
         return finish({
           deny: true,
           reason:
-            '【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 3 个不同文件（' +
+            `【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 ${maxLimit} 个不同文件（` +
             readList.map((p) => path.basename(p)).join(', ') +
-            '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash_lite") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
+            '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
         });
       }
       recordNormFile = normFile;
@@ -215,7 +232,7 @@ function decide() {
   if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {
     return finish({
       deny: true,
-      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 flash_lite 抽样，或明确传入 StartLine/EndLine。`,
+      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 flash 抽样，或明确传入 StartLine/EndLine。`,
     });
   }
 
@@ -226,7 +243,7 @@ function decide() {
     if ((info.bytes || 0) > CODE_HARD_BYTES && (info.avgLineBytes || 0) > 4096) {
       return finish({
         deny: true,
-        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="flash_lite") 检索或用 grep_search 定位。`,
+        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="flash") 检索或用 grep_search 定位。`,
       });
     }
     const from = start ?? 1;
@@ -250,7 +267,7 @@ function decide() {
       const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
       return finish({
         deny: true,
-        reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash_lite") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
+        reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
       });
     }
     if ((info.bytes || 0) > CODE_SOFT_BYTES || info.lines > CODE_SOFT_LINES) {
@@ -265,7 +282,7 @@ function decide() {
       const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
       return finish({
         deny: true,
-        reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash_lite") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+        reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
       });
     }
   }
@@ -276,7 +293,7 @@ function decide() {
       const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
       return finish({
         deny: true,
-        reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash_lite") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
+        reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
       });
     }
   }

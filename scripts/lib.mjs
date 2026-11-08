@@ -15,17 +15,188 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_DIR = path.dirname(SCRIPTS_DIR);
-export const STATE_DIR = path.join(PLUGIN_DIR, '.state');
+export const STATE_DIR = process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR
+  ? path.resolve(process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR)
+  : path.join(PLUGIN_DIR, '.state');
 export const SESSION_DIR = path.join(STATE_DIR, 'sessions');
 export const LOG_FILE = path.join(STATE_DIR, 'decisions.jsonl');
 export const SPAWN_FILE = path.join(STATE_DIR, 'last_spawn.json');
+export const SPAWN_LOCK = path.join(STATE_DIR, 'last_spawn.lock');
+
+/* ------------------------------------------------------------------- locks */
+
+/**
+ * Cross-platform spinlock using exclusive file creation ('wx').
+ * If lock file is older than 3000ms, it is considered stale/deadlocked and cleaned up.
+ */
+export function acquireLock(lockFile, timeoutMs = 2000) {
+  const start = Date.now();
+  const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
+  while (Date.now() - start < timeoutMs) {
+    try {
+      const fd = fs.openSync(lockFile, 'wx');
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+      return true;
+    } catch (err) {
+      if (err && err.code === 'EEXIST') {
+        try {
+          const st = fs.statSync(lockFile);
+          if (Date.now() - st.mtimeMs > 3000) {
+            try {
+              fs.unlinkSync(lockFile);
+            } catch {
+              /* ignore */
+            }
+            continue;
+          }
+        } catch {
+          // lock file may have just been removed by another process
+          continue;
+        }
+        Atomics.wait(sleepBuffer, 0, 0, 15);
+      } else {
+        try {
+          fs.mkdirSync(path.dirname(lockFile), { recursive: true });
+        } catch {
+          /* ignore */
+        }
+        Atomics.wait(sleepBuffer, 0, 0, 15);
+      }
+    }
+  }
+  return false;
+}
+
+export function releaseLock(lockFile) {
+  try {
+    fs.unlinkSync(lockFile);
+  } catch {
+    /* ignore */
+  }
+}
+
+/**
+ * Safe atomic write with Windows EPERM retry and copy fallback.
+ */
+export function safeWriteFileSync(filePath, content) {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
+    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    fs.writeFileSync(tmpFile, content, { encoding: 'utf8', mode: 0o600 });
+    let renamed = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      try {
+        fs.renameSync(tmpFile, filePath);
+        renamed = true;
+        break;
+      } catch {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+      }
+    }
+    if (!renamed) {
+      try {
+        fs.copyFileSync(tmpFile, filePath);
+      } finally {
+        try {
+          fs.unlinkSync(tmpFile);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  } catch {
+    try {
+      fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 });
+    } catch (err) {
+      try {
+        process.stderr.write(`[pro-flash-orchestrator] state write failed: ${filePath}: ${err && err.message}\n`);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+}
+
+/* -------------------------------------------------------------- spawn pool */
 
 export function markSubagentSpawn(parentConvId) {
   try {
     ensureStateDir();
-    fs.writeFileSync(SPAWN_FILE, JSON.stringify({ ts: Date.now(), parent: String(parentConvId || '') }), 'utf8');
+    const locked = acquireLock(SPAWN_LOCK, 2000);
+    try {
+      const now = Date.now();
+      let pool = { pendingCount: 0, spawns: [] };
+      if (fs.existsSync(SPAWN_FILE)) {
+        try {
+          const raw = fs.readFileSync(SPAWN_FILE, 'utf8');
+          const data = JSON.parse(raw);
+          if (Array.isArray(data && data.spawns)) {
+            pool.spawns = data.spawns;
+          } else if (data && data.parent && data.ts) {
+            pool.spawns = [{ parent: String(data.parent), ts: Number(data.ts), claimedBy: null }];
+          }
+        } catch {
+          /* ignore json parse */
+        }
+      }
+      pool.spawns = pool.spawns.filter((s) => now - Number(s.ts || 0) < 60000);
+      pool.spawns.push({
+        id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
+        parent: String(parentConvId || ''),
+        ts: now,
+        claimedBy: null,
+      });
+      pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
+      safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
+    } finally {
+      if (locked) releaseLock(SPAWN_LOCK);
+    }
   } catch {
     /* ignore */
+  }
+}
+
+export function checkAndClaimSubagent(convId) {
+  if (!convId || convId === 'unknown' || convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST)) return null;
+  try {
+    ensureStateDir();
+    const locked = acquireLock(SPAWN_LOCK, 2000);
+    try {
+      if (!fs.existsSync(SPAWN_FILE)) return null;
+      const raw = fs.readFileSync(SPAWN_FILE, 'utf8');
+      const pool = JSON.parse(raw);
+      if (!pool || !Array.isArray(pool.spawns)) return null;
+
+      const now = Date.now();
+      pool.spawns = pool.spawns.filter((s) => now - Number(s.ts || 0) < 60000);
+
+      // 1. check if already claimed by this convId
+      const existing = pool.spawns.find((s) => s.claimedBy === convId);
+      if (existing) {
+        return { isSubAgent: true, parent: existing.parent };
+      }
+
+      // 2. find first unclaimed spawn not spawned by convId
+      const unclaimed = pool.spawns.find((s) => !s.claimedBy && s.parent !== convId);
+      if (unclaimed) {
+        unclaimed.claimedBy = convId;
+        pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
+        safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
+        return { isSubAgent: true, parent: unclaimed.parent };
+      }
+
+      pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
+      safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
+      return null;
+    } finally {
+      if (locked) releaseLock(SPAWN_LOCK);
+    }
+  } catch {
+    return null;
   }
 }
 
@@ -148,7 +319,7 @@ export function isSubAgent(payload) {
   try {
     const p = payload || {};
     const convId = String((p && p.conversationId) || '');
-    const isDoctor = convId === 'doctor-test';
+    const isDoctor = convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST);
     const sess = convId && convId !== 'unknown' ? readSession(convId) : {};
 
     if (!isDoctor && sess && sess.isSubAgent === true) return true;
@@ -176,31 +347,22 @@ export function isSubAgent(payload) {
     }
     if (verdict === false) {
       if (convId && convId !== 'unknown' && !isDoctor) {
-        writeSession(convId, { ...sess, isSubAgent: false });
+        updateSession(convId, (s) => {
+          s.isSubAgent = false;
+        });
       }
       return false;
     }
 
-    if (verdict === null && !p.toolCall) {
+    if (!isDoctor && verdict === null) {
       try {
-        if (fs.existsSync(SPAWN_FILE)) {
-          const spawnRaw = fs.readFileSync(SPAWN_FILE, 'utf8');
-          const spawn = JSON.parse(spawnRaw);
-          if (
-            spawn &&
-            Date.now() - Number(spawn.ts || 0) < 20000 &&
-            convId &&
-            convId !== 'unknown' &&
-            convId !== spawn.parent
-          ) {
-            writeSession(convId, { ...sess, isSubAgent: true, parentConversationId: spawn.parent });
-            try {
-              fs.unlinkSync(SPAWN_FILE);
-            } catch {
-              /* ignore */
-            }
-            return true;
-          }
+        const claim = checkAndClaimSubagent(convId);
+        if (claim && claim.isSubAgent) {
+          updateSession(convId, (s) => {
+            s.isSubAgent = true;
+            s.parentConversationId = claim.parent;
+          });
+          return true;
         }
       } catch {
         /* ignore */
@@ -247,7 +409,8 @@ export function currentMode() {
 
 export function ensureStateDir() {
   try {
-    fs.mkdirSync(SESSION_DIR, { recursive: true });
+    fs.mkdirSync(STATE_DIR, { recursive: true, mode: 0o700 });
+    fs.mkdirSync(SESSION_DIR, { recursive: true, mode: 0o700 });
     const now = Date.now();
     const maxAgeMs = 14 * 24 * 60 * 60 * 1000;
     const files = fs.readdirSync(SESSION_DIR);
@@ -270,6 +433,16 @@ export function ensureStateDir() {
 
 /* ------------------------------------------------------------------- logs */
 
+/** Mask credentials/tokens in log strings */
+export function maskSecrets(value) {
+  if (typeof value !== 'string') return value;
+  return value
+    .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1***')
+    .replace(/\b(sk-[A-Za-z0-9]{20,})\b/g, 'sk-***')
+    .replace(/\b(ghp_[A-Za-z0-9]{20,})\b/g, 'ghp_***')
+    .replace(/((?:password|passwd|secret|token|api_key|apiKey)\s*[:=]\s*)[^\s;&|'"]+/gi, '$1***');
+}
+
 /** Hooks call this once so every log line carries the conversation id. */
 let CTX = null;
 
@@ -281,11 +454,18 @@ export function logDecision(entry) {
   try {
     ensureStateDir();
     const conv = CTX && CTX.conversationId ? String(CTX.conversationId).slice(0, 8) : '';
+    const safeEntry = { ...entry };
+    if (typeof safeEntry.command === 'string') {
+      safeEntry.command = maskSecrets(safeEntry.command);
+    }
+    if (typeof safeEntry.reason === 'string') {
+      safeEntry.reason = maskSecrets(safeEntry.reason);
+    }
     const record = {
       ts: new Date().toISOString(),
       ...(conv ? { conv } : {}),
       ...(process.env.ARGON_TEST === '1' ? { test: true } : {}),
-      ...entry,
+      ...safeEntry,
     };
     try {
       const st = fs.statSync(LOG_FILE);
@@ -293,7 +473,7 @@ export function logDecision(entry) {
     } catch {
       /* first write */
     }
-    fs.appendFileSync(LOG_FILE, `${JSON.stringify(record)}\n`, 'utf8');
+    fs.appendFileSync(LOG_FILE, `${JSON.stringify(record)}\n`, { encoding: 'utf8', mode: 0o600 });
   } catch {
     /* never let logging break a hook */
   }
@@ -389,23 +569,64 @@ export function basenameOf(file) {
 
 /* --------------------------------------------------------------- sessions */
 
+function sanitizeSessionId(conversationId) {
+  const id = String(conversationId || 'unknown').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128);
+  return /^\.*$/.test(id) ? 'unknown' : id;
+}
+
 function sessionFile(conversationId) {
-  const id = String(conversationId || 'unknown').replace(/[^a-zA-Z0-9._-]/g, '_');
-  return path.join(SESSION_DIR, `${id}.json`);
+  return path.join(SESSION_DIR, `${sanitizeSessionId(conversationId)}.json`);
+}
+
+function sessionLockFile(conversationId) {
+  return path.join(SESSION_DIR, `${sanitizeSessionId(conversationId)}.lock`);
+}
+
+function defaultSession(extra = {}) {
+  return {
+    currentBatchSpawns: 0,
+    lastSpawnAt: 0,
+    maxReadsAllowed: 3,
+    activeSubagents: [],
+    ...(extra && typeof extra === 'object' ? extra : {}),
+  };
 }
 
 export function readSession(conversationId) {
   try {
-    return JSON.parse(fs.readFileSync(sessionFile(conversationId), 'utf8')) || {};
+    const raw = fs.readFileSync(sessionFile(conversationId), 'utf8');
+    const parsed = JSON.parse(raw);
+    return defaultSession(parsed);
   } catch {
-    return {};
+    return defaultSession();
+  }
+}
+
+export function updateSession(convId, mutatorFn) {
+  const lockFile = sessionLockFile(convId);
+  ensureStateDir();
+  const locked = acquireLock(lockFile, 2000);
+  try {
+    const current = readSession(convId);
+    let updated = typeof mutatorFn === 'function' ? mutatorFn(current) : current;
+    if (updated === undefined) {
+      updated = current;
+    }
+    const finalData = defaultSession(updated);
+    safeWriteFileSync(sessionFile(convId), JSON.stringify(finalData));
+    return finalData;
+  } catch {
+    return defaultSession();
+  } finally {
+    if (locked) {
+      releaseLock(lockFile);
+    }
   }
 }
 
 export function writeSession(conversationId, data) {
   try {
-    ensureStateDir();
-    fs.writeFileSync(sessionFile(conversationId), JSON.stringify(data || {}), 'utf8');
+    return updateSession(conversationId, () => data);
   } catch {
     /* ignore */
   }

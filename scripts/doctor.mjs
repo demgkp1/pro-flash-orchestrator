@@ -11,26 +11,31 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { isSubAgent } from './lib.mjs';
-import { loadDecisions } from './report.mjs';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = path.dirname(SCRIPT_DIR);
+
 function getDoctorTmpDir() {
   const preferred = path.join(os.tmpdir(), `pro-doctor-${process.pid}`);
   try {
-    fs.mkdirSync(preferred, { recursive: true });
+    fs.mkdirSync(preferred, { recursive: true, mode: 0o700 });
     const probe = path.join(preferred, '.probe');
     fs.writeFileSync(probe, 'ok', 'utf8');
     fs.unlinkSync(probe);
     return preferred;
   } catch {
     const fallback = path.join(PLUGIN_DIR, '.state', `tmp-doctor-${process.pid}`);
-    fs.mkdirSync(fallback, { recursive: true });
+    fs.mkdirSync(fallback, { recursive: true, mode: 0o700 });
     return fallback;
   }
 }
 const TMP = getDoctorTmpDir();
+const DOCTOR_STATE_DIR = path.join(TMP, 'state');
+fs.mkdirSync(DOCTOR_STATE_DIR, { recursive: true, mode: 0o700 });
+process.env.PRO_STATE_DIR = DOCTOR_STATE_DIR;
+
+const { isSubAgent, logDecision, STATE_DIR, ensureStateDir } = await import('./lib.mjs');
+const { loadDecisions } = await import('./report.mjs');
 
 let passed = 0;
 const failures = [];
@@ -56,7 +61,7 @@ function runHook(script, payload, env = {}) {
     cwd: PLUGIN_DIR,
     encoding: 'utf8',
     timeout: 15000,
-    env: { ...process.env, PRO_TEST: '1', ARGON_TEST: '1', ...env },
+    env: { ...process.env, PRO_STATE_DIR: DOCTOR_STATE_DIR, PRO_TEST: '1', ARGON_TEST: '1', ...env },
   });
   const raw = (result.stdout || '').trim();
   let json = null;
@@ -219,9 +224,9 @@ check('派单守门：Model="pro" 被降级为 flash', () => {
   assert(String(out.overwrite.Prompt).includes('[PRO-CONTRACT]'), 'contract not appended');
 });
 
-check('派单守门：research + inherit → flash_lite + 研究契约', () => {
+check('派单守门：research + inherit → flash + 研究契约', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }));
-  assert(out.overwrite.Model === 'flash_lite', `expected flash_lite, got ${out.overwrite && out.overwrite.Model}`);
+  assert(out.overwrite.Model === 'flash', `expected flash, got ${out.overwrite && out.overwrite.Model}`);
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'research contract missing');
 });
 
@@ -237,21 +242,21 @@ check('派单守门：双重编码的 Model（"pro"）仍能识别并降级', ()
   assert(out.overwrite && out.overwrite.Model === 'flash', `quoted pro not downgraded: ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：双重编码的 Model（"flash_lite"）不被误升档', () => {
+check('派单守门：flash_lite 自动升级重写为 flash', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: '"flash_lite"', Prompt: '实现' }));
-  assert(!out.overwrite || !out.overwrite.Model, `quoted flash_lite should pass: ${JSON.stringify(out.overwrite)}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected flash_lite upgraded to flash: ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：当前主模型已是 flash 时，research 子代理仍降级为 flash_lite', () => {
+check('派单守门：当前主模型已是 flash 时，research 子代理仍统一指定为 flash', () => {
   const payload = dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' });
   payload.modelName = 'Gemini 3.8 Flash (High)';
   const out = runHook('guard-subagent.mjs', payload);
-  assert(out.overwrite && out.overwrite.Model === 'flash_lite', `expected Model=flash_lite, got ${out.overwrite && out.overwrite.Model}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected Model=flash, got ${out.overwrite && out.overwrite.Model}`);
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'contract should still be appended');
 });
 
-check('派单守门：当前主模型已是 flash 时，self 子代理 inherit 不再重复改写 Model', () => {
-  const payload = dispatch({ TypeName: 'self', Model: 'inherit', Prompt: '实现' });
+check('派单守门：当前主模型已是 flash 时，self 子代理派单 Model="flash" 不再重复改写 Model', () => {
+  const payload = dispatch({ TypeName: 'self', Model: 'flash', Prompt: '实现' });
   payload.modelName = 'Gemini 3.8 Flash (High)';
   const out = runHook('guard-subagent.mjs', payload);
   assert(!out.overwrite || !out.overwrite.Model, `expected no Model rewrite, got ${out.overwrite && out.overwrite.Model}`);
@@ -373,7 +378,7 @@ check('读取守门：500 行代码被自动切片到 150 行', () => {
 
 check('读取守门：900 行代码被拦截并要求派单', () => {
   const out = runHook('guard-read-file.mjs', basePayload({ toolCall: { name: 'read_file', args: { AbsolutePath: hugeCode } } }));
-  assert(out.decision === 'deny' && /flash_lite/.test(out.reason), `expected deny+flash_lite, got ${JSON.stringify(out)}`);
+  assert(out.decision === 'deny' && /flash\b/.test(out.reason), `expected deny+flash, got ${JSON.stringify(out)}`);
 });
 
 check('读取守门：500 行文档被拦截', () => {
@@ -822,16 +827,100 @@ check('写入守门：主代理直改前 2 个不同文件放行，直改第 3 �
   assert(/多文件连续直改拦截/.test(res3.reason), `expected 多文件连续直改拦截 in reason: ${res3.reason}`);
 });
 
+/* ------------------------------------------------------------ S1 / S2 / S3 security additions */
+check('安全防护 S1：主代理与子代理通过 write_file 修改 mode.json 均被拦截', () => {
+  const modeFile = path.join(DOCTOR_STATE_DIR, 'mode.json');
+
+  // 1. 主代理试图 write_file mode.json
+  const outMain = runHook('guard-write-file.mjs', basePayload({
+    toolCall: { name: 'write_file', args: { Path: modeFile, Content: '{"mode":"off"}' } },
+  }));
+  assert(outMain.decision === 'deny', `expected deny for main agent writing mode.json, got ${JSON.stringify(outMain)}`);
+  assert(outMain.reason.includes('【安全拦截】'), `reason should include 安全拦截, got: ${outMain.reason}`);
+
+  // 2. 子代理试图 write_file mode.json
+  const outSub = runHook('guard-write-file.mjs', basePayload({
+    parentConversationId: 'doctor-parent-123',
+    toolCall: { name: 'write_file', args: { Path: modeFile, Content: '{"mode":"off"}' } },
+  }));
+  assert(outSub.decision === 'deny', `expected deny for subagent writing mode.json, got ${JSON.stringify(outSub)}`);
+  assert(outSub.reason.includes('【安全拦截】'), `reason should include 安全拦截, got: ${outSub.reason}`);
+});
+
+check('安全防护 S1：主代理与子代理通过 run_command 修改 mode.json 均被拦截', () => {
+  const modeTarget = path.join(DOCTOR_STATE_DIR, 'mode.json');
+
+  // 1. 主代理命令行修改 mode.json
+  const outCmdMain = runHook('guard-command.mjs', basePayload({
+    toolCall: { name: 'run_command', args: { CommandLine: `echo '{"mode":"off"}' > "${modeTarget}"` } },
+  }));
+  assert(outCmdMain.decision === 'deny', `expected deny for command targeting mode.json, got ${JSON.stringify(outCmdMain)}`);
+  assert(outCmdMain.reason.includes('【安全拦截】'), `reason should include 安全拦截, got: ${outCmdMain.reason}`);
+
+  // 2. 子代理命令行修改 mode.json
+  const outCmdSub = runHook('guard-command.mjs', basePayload({
+    parentConversationId: 'doctor-parent-123',
+    toolCall: { name: 'run_command', args: { CommandLine: `tee "${modeTarget}"` } },
+  }));
+  assert(outCmdSub.decision === 'deny', `expected deny for subagent command targeting mode.json, got ${JSON.stringify(outCmdSub)}`);
+  assert(outCmdSub.reason.includes('【安全拦截】'), `reason should include 安全拦截, got: ${outCmdSub.reason}`);
+});
+
+check('安全防护 S2：artifactDir-evil 路径不被误豁免', () => {
+  const artDir = path.join(TMP, 'artifacts');
+  const evilDir = path.join(TMP, 'artifacts-evil');
+  fs.mkdirSync(evilDir, { recursive: true });
+  const evilCode = path.join(evilDir, 'huge.js');
+  fs.writeFileSync(evilCode, Array.from({ length: 900 }, (_, i) => `// line ${i}`).join('\n'), 'utf8');
+
+  // Reading >800 line file in evilDir should NOT be exempt, hence denied
+  const readOut = runHook('guard-read-file.mjs', basePayload({
+    artifactDirectoryPath: artDir,
+    toolCall: { name: 'read_file', args: { Path: evilCode } },
+  }));
+  assert(readOut.decision === 'deny', `evil directory should not be exempt from read guard: ${JSON.stringify(readOut)}`);
+
+  // Inside true artifact dir should be exempt
+  fs.mkdirSync(artDir, { recursive: true });
+  const goodFile = path.join(artDir, 'report.md');
+  fs.writeFileSync(goodFile, Array.from({ length: 900 }, (_, i) => `// line ${i}`).join('\n'), 'utf8');
+  const goodRead = runHook('guard-read-file.mjs', basePayload({
+    artifactDirectoryPath: artDir,
+    toolCall: { name: 'read_file', args: { Path: goodFile } },
+  }));
+  assert(goodRead.decision === 'allow', 'file strictly inside artifactDirectoryPath should be exempt');
+});
+
+check('安全防护 S3：logDecision 对 Bearer token 与 sk- 密钥自动脱敏', () => {
+  const secretBearer = 'Bearer ya29.a0AfH6SMD_very_secret_oauth_token_12345';
+  const secretKey = 'sk-proj123456789012345678901234567890';
+  const rawCommand = `curl -H "Authorization: ${secretBearer}" https://api.example.com -H "X-Key: ${secretKey}"`;
+
+  logDecision({
+    hook: 'doctor-test',
+    action: 'test-masking',
+    command: rawCommand,
+    reason: `failed with ${secretKey}`,
+  });
+
+  const logContent = fs.readFileSync(path.join(DOCTOR_STATE_DIR, 'decisions.jsonl'), 'utf8');
+  assert(!logContent.includes('very_secret_oauth_token_12345'), 'bearer token leaked in log');
+  assert(logContent.includes('Bearer ***'), 'bearer token not masked with Bearer ***');
+  assert(!logContent.includes('sk-proj123456789012345678901234567890'), 'sk- token leaked in log');
+  assert(logContent.includes('sk-***'), 'sk- token not masked with sk-***');
+});
+
 /* -------------------------------------------------------------------- done */
 try {
   fs.rmSync(TMP, { recursive: true, force: true });
-  const sessions = path.join(PLUGIN_DIR, '.state', 'sessions');
-  for (const file of fs.readdirSync(sessions)) {
-    if (file.startsWith('doctor-')) fs.rmSync(path.join(sessions, file), { force: true });
-  }
 } catch {
   /* ignore */
 }
+process.on('exit', () => {
+  try {
+    fs.rmSync(TMP, { recursive: true, force: true });
+  } catch {}
+});
 
 console.log(`\n结果：${passed} 通过，${failures.length} 失败`);
 if (failures.length > 0) {

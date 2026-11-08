@@ -28,7 +28,7 @@ const BOUNDED_TAIL = /\|\s*(head|tail)\b|\|\s*Select-Object\s+-(?:First|Last)\b|
 const BOUNDED_FLAG = /(^|\s)-(TotalCount|Tail|First|Last|Head)\b/i;
 const SAFE_SINK_PIPE = /\|\s*(?:Set-Content|Add-Content|sc|ac|Out-File|Out-Null)\b/i;
 const REDIRECT_TARGET = /(?<!2)(?:1?>>|1?>|&>)\s*(?!&[12]\b)(?:["'][^"']+["']|\$null\b|\/dev\/null\b|NUL\b|[^\s|;&<>]+)/i;
-const GIT_LOG = /(?:^|[;&|]\s*)git\b(?:\s+(?:-[^\s]+(?:\s+[^\s-;|<>&]+)?))*\s+log\b/i;
+const GIT_LOG = /(?:^|[;&|`(]\s*|\bxargs\s+(?:-\S+\s+)*)git\b(?:\s+(?:-[^\s]+(?:\s+[^\s-;|<>&]+)?))*\s+log\b/i;
 const GIT_LOG_BOUND = /(-n\s*\d+|--max-count|-n\d+|\s-\d+\b|--oneline\s+-n)/i;
 
 function unquote(value) {
@@ -280,7 +280,6 @@ function decide() {
 
   const tool = toolName(payload);
   if (tool !== 'run_command') return ALLOW;
-  if (isSubAgent(payload)) return ALLOW;
 
   const args = getArgs(payload);
   const command = String(args.CommandLine || args.Command || args.command || '');
@@ -297,6 +296,16 @@ function decide() {
     });
     return mode === 'shadow' ? ALLOW : { decision: 'deny', reason };
   };
+
+  /* S1: mode.json is protected by security policy; no agent may modify it */
+  if (/\bmode\.json\b/i.test(command)) {
+    return deny(
+      'mode-json',
+      '【安全拦截】禁止通过命令修改 mode.json。运行模式为用户安全配置，只能由用户在 .state/mode.json 手动配置。',
+    );
+  }
+
+  if (isSubAgent(payload)) return ALLOW;
 
   const pipelines = getSubPipelines(command);
 
@@ -322,7 +331,7 @@ function decide() {
         if (size > DUMP_BYTES) {
           return deny(
             'dump',
-            `【命令守门】\`${dump.reader}\` 会把 ${(size / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash_lite 提取要点。`,
+            `【命令守门】\`${dump.reader}\` 会把 ${(size / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash 提取要点。`,
           );
         }
       } catch {

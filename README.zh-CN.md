@@ -2,7 +2,7 @@
 
 面向 Google Antigravity 的双级大模型协同分流引擎。
 
-面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；Flash 及 Flash-Lite 模型负责外围工程扩写、测试用例编写与文档检索。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
+面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；所有助手子代理统一使用 Flash 模型负责外围工程扩写、测试用例编写与文档检索（取消 flash_lite）。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Version](https://img.shields.io/badge/Version-v0.3.2-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
@@ -27,7 +27,7 @@
 ## 协同分工模型
 
 ### 全场景分流原则（按规模分流，不限语言、框架与领域）
-- **探路与审阅（≥3 个文件或长文档/大代码）**：必须外派 `research (flash_lite)` 提取结构化摘要与精确行号，禁止主模型并发切片连读。
+- **探路与审阅（≥3 个文件或长文档/大代码）**：必须外派 `research (flash)` 提取结构化摘要与精确行号，禁止主模型并发切片连读。
 - **工程实现与批量修复（>50 行或 ≥2 个文件）**：Pro 亲自落盘核心标杆/关键算法，同轮并发外派 `self (flash)` 扩写外围与回归单测。
 - **单点微调（≤50 行、≤2 个已知文件）**：Pro 亲自切片直改（反向止损，避免多轮派单延迟）。
 
@@ -45,8 +45,7 @@
                     ▼
 ┌────────────────────────────────────────┐
 │       Hook 守门拦截 (Physical Guards)  │
-│  - 物理强制降级: research→flash_lite   │
-│                 self/工程→flash        │
+│  - 统一子代理降级: research/self→flash │
 │  - 自动注入 [FLASH-WORKER] 与汇报契约  │
 │  - 递归与轮询阻断: 禁止套娃与 list 轮询│
 │  - 读写守门: 截断切片连读 & 限制写入标杆│
@@ -55,7 +54,7 @@
                     ▼
 ┌────────────────────────────────────────┐
 │         Flash 执行助手 (轻量模型)      │
-│  - 探路(flash_lite) / 机械扩写(flash)  │
+│  - 统一使用 flash (探路调研与工程扩写) │
 │  - 运行真实命令自检 (自闭环报错)       │
 │  - 仅返回结构化四列表格，禁止大段源码  │
 └───────────────────┬────────────────────┘
@@ -75,11 +74,11 @@
 | 守门机制 | 挂载钩子 | 判定与处理规则 | 经济与上下文收益 |
 | :--- | :--- | :--- | :--- |
 | **角色与契约初始化** | `SessionStart` | 会话启动时单次注入全场景分工规则；状态卡片通过 `renderInfo` 投递至 UI 渲染层。子代理启动自动跳过角色注入。 | 状态卡片对大模型零 Token 消耗，不侵占上下文。 |
-| **子代理降级增强** | `PreToolUse` (`invoke_subagent`) | 主模型无论 Pro 还是 Flash，`research` 调研子代理一律降级为 `flash_lite` 极轻量模型；`self` 与常规工程子代理降级为 `flash`；仅携带 `[FORCE-PRO]` 时保留旗舰模型。 | 最大化压低调研与工程 Token 开销，杜绝高级配额浪费。 |
+| **子代理统一降级** | `PreToolUse` (`invoke_subagent`) | 所有助手子代理统一使用 `flash`（`research` 探路调研与 `self` 工程实现均统一定向为 `flash`，取消 flash_lite）；仅显式携带 `[FORCE-PRO]` 时保留旗舰模型。 | 统一模型规格，平衡调研推理质量与 Token 成本，杜绝高级配额浪费。 |
 | **写入守门与标杆约束** | `PreToolUse` (`write_file`, `edit_file` 等) | 主模型直接修改源码文件限制在 1~2 个核心/标杆文件内；维护 `writesSinceDispatch`，试图修改第 3 个不同源码文件硬拦截（`deny`）并引导外派 Flash，子代理与 Artifact/生态路径自动豁免。 | 杜绝 Pro 亲自大包大揽机械工程，物理倒逼同轮并发外派助手扩写。 |
 | **冷启动、递归与轮询拦截** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **冷启动派生时间窗**：派单时写入 `last_spawn.json` 记录时间戳与父会话 ID，结合转录首行特征杜绝冷启动误判；<br>2. **递归阻断**：严格拦截子代理套娃派单（`deny`）；<br>3. **轮询拦截**：拦截主模型调用 `manage_subagents(Action="list")` 轮询子代理状态，消除等待期间无效 Token 消耗与异步抢改，引导直接结束回合静默等待系统唤醒（`Action="kill"` 放行）。 | 消除多层死循环、抢跑改写与轮询上下文浪费，保证异步协同秩序。 |
 | **中立契约与自定义守门** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 派单、自定义代理定义（`define_subagent`）及消息追加自动注入 `[FLASH-WORKER]` 与契约：工程子代理必须返回四列表格+自检命令与结果，`research` 调研子代理直接输出结构化摘要无需写文件。`artifactDirectoryPath` 丢失时安全回退至绝对路径 `~/.gemini/antigravity/brain/<convId>`。 | 消除大段源码回贴与只读沙箱写文件异常，防止工作区根目录污染。 |
-| **切片防泄洪与多文件连读拦截** | `PreToolUse` (`read_file`, `view_file`) | 1. **智能切片**：未显式切片读取代码文件（300-800行）自动收窄至 [1, 150] 行，>800 行代码或 >400 行文档/日志直接拦截引导派单；<br>2. **防泄洪增强**：文件 >40KB 且平均行长 >4KB（Minified 压缩代码/数据）一律物理拦截；<br>3. **多文件切片连读拦截**：维护 `readsSinceDispatch`，主模型试图切片连读第 4 个不同源码/文档文件触发硬拦截（`deny`），强制改派 `research (flash_lite)`。自动豁免依赖库与 Artifact 目录。 | 消除单行压缩数据穿透与超大文件撑爆上下文的隐患，彻底阻断主模型以切片形式逐个连读多文件探路。 |
+| **切片防泄洪与多文件连读拦截** | `PreToolUse` (`read_file`, `view_file`) | 1. **智能切片**：未显式切片读取代码文件（300-800行）自动收窄至 [1, 150] 行，>800 行代码或 >400 行文档/日志直接拦截引导派单；<br>2. **防泄洪增强**：文件 >40KB 且平均行长 >4KB（Minified 压缩代码/数据）一律物理拦截；<br>3. **多文件切片连读拦截**：维护 `readsSinceDispatch`，主模型试图切片连读第 4 个不同源码/文档文件触发硬拦截（`deny`），强制改派 `research (flash)`。自动豁免依赖库与 Artifact 目录。 | 消除单行压缩数据穿透与超大文件撑爆上下文的隐患，彻底阻断主模型以切片形式逐个连读多文件探路。 |
 | **命令防倾倒增强** | `PreToolUse` (`run_command`) | 递归解包多层嵌套 Shell；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。**全模式防倾倒**：覆盖变量赋值（`$content = Get-Content`）、子表达式（`Resolve-Path`）及 .NET 静态方法（`[IO.File]::ReadAllText`）。放行真实文件重定向输出（`>`、`>>`、`| Set-Content`、`> /dev/null`）。 | 杜绝终端海量日志倾倒至对话中，封堵全部管道与代码逃逸手段，同时不影响离线写盘。 |
 | **轮次边界唤醒与去重漂移感知** | `PreInvocation` | 1. **长会话轮次边界唤醒**：基于 `globalStep >= 8` 判定，在用户新需求交互轮次起始处注入瞬态 `ephemeralMessage`，唤醒架构师分流职责，根治长程注意力稀释；<br>2. **去重漂移告警**：基于去重且剔除豁免路径的 `readsSinceDispatch` 与 `writesSinceDispatch`，若连续改写或连读未派单触发单轮即抛告警；<br>3. **精准降噪**：运行时模型切为 Flash 时自动停用架构师漂移告警，彻底过滤文本中工具名字面量的误报。 | 零历史上下文残留，精准告警与轮次唤醒兼备，保障架构师长期自律。 |
 
@@ -155,6 +154,7 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
    ```json
    { "mode": "shadow" }
    ```
+   > **安全说明 (S1)**：`.state/mode.json` 属于用户安全配置，只能由人类用户手动编辑修改，受守门机制严格保护，严禁任何 AI 代理通过工具修改或覆盖。
 2. 环境变量（修改后需重启 Antigravity 生效）：
    - Windows PowerShell: `$env:PRO_MODE="shadow"`
    - macOS / Linux: `export PRO_MODE=shadow`
@@ -179,6 +179,12 @@ node scripts/report.mjs
 ```bash
 node scripts/report.mjs --days 30
 ```
+
+---
+
+## 已知限制
+
+- **管道与重定向旁路 (S5)**：直接通过 `run_command` 执行的 Shell 管道或流式工具（如 `head`、`grep`、`sed`、重定向 `>` 等）主要由命令防倾倒守门检测命令安全性，不计入 `read_file`/`write_file` 的切片连读与标杆写文件配额计数。
 
 ---
 

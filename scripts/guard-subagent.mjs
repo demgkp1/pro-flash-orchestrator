@@ -3,9 +3,8 @@
  * PreToolUse guard for `invoke_subagent` / `define_subagent` / `send_message` (v0.3).
  *
  * 1. recursion  — a sub-agent may not dispatch another sub-agent (hard deny).
- * 2. model leak — `Model` missing / "inherit" / "pro" is rewritten to
- *                 flash_lite (research) or flash (everything else), unless the
- *                 prompt (or the user's own message) carries [FORCE-ARGON].
+ * 2. model leak — `Model` missing / "inherit" / "pro" / "flash_lite" is rewritten
+ *                 to "flash", unless the prompt (or user message) carries [FORCE-PRO].
  * 3. contract   — the report contract is appended to the dispatch prompt, so it
  *                 cannot be forgotten by the model. Idempotent via a marker.
  *
@@ -26,6 +25,7 @@ import {
   readSession,
   setContext,
   toolName,
+  updateSession,
   writeSession,
 } from './lib.mjs';
 
@@ -38,9 +38,8 @@ const INVOKE = 'invoke_subagent';
 const DEFINE = 'define_subagent';
 const SEND = 'send_message';
 const MANAGE = 'manage_subagents';
-const CHEAP_MODELS = new Set(['flash', 'flash_lite']);
 
-/** Some dispatches arrive double-encoded: `Model: "\"flash_lite\""`. */
+/** Some dispatches arrive double-encoded: `Model: "\"flash\""`. */
 function clean(value) {
   return String(value ?? '')
     .trim()
@@ -67,12 +66,16 @@ function contractFor(typeName, payload) {
   if (typeName === 'research') {
     return (
       `${CONTRACT_MARKER} 汇报仅限结构化摘要（≤30 行）：核心结论 / 架构与模块清单 / 约束与隐患 / 关键文件与行号。` +
+      `每项结论必须附带具体文件:行号（file:line）及 1-2 行代码证据；凡包含统计结论的，必须附带生成该统计的执行命令。` +
       `严禁粘贴大段源码原文（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。`
     );
   }
   return (
     `${CONTRACT_MARKER} 完成后仅回复四列表格，禁止粘贴源码（单段代码 ≤10 行）；完整报告写入 \`${dir}/<task>.report.md\`：\n` +
-    '| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |'
+    '| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |\n\n' +
+    '【多代理并发安全与边界红线】\n' +
+    '1. 文件互斥红线：专属写入范围与只读参考范围隔离，仅允许修改指派给你的专属文件，严禁越界修改其他代理负责的文件；\n' +
+    '2. 精准局部测试红线：自检验证仅运行针对修改模块的单文件局部测试，禁止全量构建或全工程回归测试，避免进程冲突与磁盘 I/O 踩踏。'
   );
 }
 
@@ -117,23 +120,56 @@ function decide() {
   /* 1. recursion ------------------------------------------------------- */
   if (sub && (tool === INVOKE || tool === DEFINE)) {
     const reason =
-      '【递归守门】子代理不得再派发子代理。请直接执行任务并按 [PRO-CONTRACT] 回报，把需要拆分的工作写进汇报。';
+      '【递归守门】子代理不得再派发子代理。请直接执行任务并按 [PRO-CONTRACT] 回报，将需要拆分的子任务建议写入汇报表格（或后续拆分建议）中。';
     logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, reason });
     return mode === 'enforce' ? { decision: 'deny', reason } : ALLOW;
   }
 
   if (!sub) {
     if (tool === INVOKE) {
-      markSubagentSpawn(payload.conversationId);
-      const state = readSession(payload.conversationId);
-      state.readsSinceDispatch = [];
-      state.writesSinceDispatch = [];
-      writeSession(payload.conversationId, state);
+      const convId = payload.conversationId;
+      const isDoctor = convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST);
+      let quotaDeny = false;
+      let denyReason = '';
+
+      if (!isDoctor) {
+        updateSession(convId, (state) => {
+          const now = Date.now();
+          const hasReads = Array.isArray(state.readsSinceDispatch) && state.readsSinceDispatch.length > 0;
+          const hasWrites = Array.isArray(state.writesSinceDispatch) && state.writesSinceDispatch.length > 0;
+          const isNewBatch = (now - Number(state.lastSpawnAt || 0) > 30000) || hasReads || hasWrites;
+
+          let batchCount = isNewBatch ? 0 : Number(state.currentBatchSpawns || 0);
+
+          if (batchCount >= 5) {
+            quotaDeny = true;
+            denyReason =
+              '【并发守门拦截】单轮并发派发 Subagent 数量已达硬性上限 (5个)。请立即结束当前回复轮次（不要再调用工具），静默等待系统异步唤醒与子代理消息通知，待当前批次完成汇报后再继续派发，避免上下文泄洪与文件冲突。';
+            return state;
+          }
+
+          batchCount += 1;
+          state.currentBatchSpawns = batchCount;
+          state.lastSpawnAt = now;
+          state.readsSinceDispatch = [];
+          state.writesSinceDispatch = [];
+          state.maxReadsAllowed = Math.min(10, Math.max(3, batchCount * 2));
+          return state;
+        });
+
+        if (quotaDeny) {
+          logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, reason: denyReason });
+          return mode === 'enforce' ? { decision: 'deny', reason: denyReason } : ALLOW;
+        }
+
+        markSubagentSpawn(convId);
+      }
     } else if (tool === SEND) {
-      const state = readSession(payload.conversationId);
-      state.readsSinceDispatch = [];
-      state.writesSinceDispatch = [];
-      writeSession(payload.conversationId, state);
+      updateSession(payload.conversationId, (state) => {
+        state.readsSinceDispatch = [];
+        state.writesSinceDispatch = [];
+        return state;
+      });
     }
   }
 
@@ -153,18 +189,10 @@ function decide() {
     const model = clean(args.Model);
     const lower = model.toLowerCase();
     const currentModel = String((payload && payload.modelName) || '').toLowerCase();
-    const isCurrentModelFlash = currentModel.includes('flash');
-    const target = typeName === 'research' ? 'flash_lite' : 'flash';
 
     if (!forced) {
-      if (typeName === 'research') {
-        if (lower !== 'flash_lite') {
-          overwrite.Model = 'flash_lite';
-        }
-      } else if (lower === 'pro') {
-        overwrite.Model = target;
-      } else if (!isCurrentModelFlash && !CHEAP_MODELS.has(lower)) {
-        overwrite.Model = target;
+      if (lower !== 'flash' || args.Model !== 'flash') {
+        overwrite.Model = 'flash';
       }
     }
 
