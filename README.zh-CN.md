@@ -5,9 +5,9 @@
 面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；所有助手子代理统一使用 Flash 模型负责外围工程扩写、测试用例编写与文档检索（取消 flash_lite）。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.3.2-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.4.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-74%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-78%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -163,10 +163,15 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
 
 ## 自检诊断与决策复盘
 
-### 1. 自动化自检套件
-运行内置的 74 项端到端及单元测试断言：
+### 1. 自动化自检与并发压测套件
+运行内置的 78 项端到端及安全单元测试断言：
 ```bash
 node scripts/doctor.mjs
+```
+
+运行多进程并发原子锁与协同守门集成压测：
+```bash
+node scripts/test-concurrency.mjs
 ```
 
 ### 2. 生产决策复盘
@@ -213,7 +218,8 @@ pro-flash-orchestrator/
 │   ├── guard-read-file.mjs     # 文件读取守门（智能切片、生态豁免、切片连读拦截）
 │   ├── guard-write-file.mjs    # 文件写入守门（限制标杆直写、拦截连续修改≥3文件）
 │   ├── guard-command.mjs       # 命令守门（多层解包、重定向放行、倾倒拦截）
-│   ├── doctor.mjs              # 74 项全量自检测试套件
+│   ├── doctor.mjs              # 78 项全量自检测试套件
+│   ├── test-concurrency.mjs    # 多进程并发压测与守门集成测试套件
 │   └── report.mjs              # 生产决策聚合与统计复盘
 └── assets/
     └── logo.svg                # 插件图标

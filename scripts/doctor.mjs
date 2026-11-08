@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * doctor.mjs — self-check for pro-flash-orchestrator v0.3.
+ * Pro-Flash Orchestrator v0.4.0 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -93,7 +93,7 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v0.3 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.4.0 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('hooks.json 可解析，且引用的脚本都存在', () => {
@@ -723,7 +723,7 @@ check('决策复盘：report.mjs 能正确解析 decisions.1.jsonl 与归档日�
   assert(actions.has('slice') && actions.has('rewrite') && actions.has('deny'), 'missing expected actions from rotated/archived files');
 });
 
-/* ------------------------------------------------------------ v0.3.2 additions */
+/* ------------------------------------------------------------ v0.4.0 additions */
 check('派单守门：主代理调用 manage_subagents(Action="list") 轮询被拦截，Action="kill" 放行', () => {
   const payloadList = basePayload({
     conversationId: 'doctor-manage-test',

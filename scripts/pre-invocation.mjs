@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v0.3.2) — turn-boundary wake-up + deduplicated drift detector.
+ * PreInvocation hook (v0.4.0) — turn-boundary wake-up + deduplicated drift detector.
  *
  * Key guarantees:
  *   1. Uses `globalStep` (transcript step_index / line count) and turn-reset

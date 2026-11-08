@@ -5,9 +5,9 @@ A dual-tier model orchestration engine for Google Antigravity.
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. Keeps the flagship Pro model focused on core decisions and benchmark implementations, while offloading peripheral implementation, unit tests, and document exploration uniformly to Flash subagents (flash_lite retired). All governance policies are enforced at the runtime lifecycle Hook level via deterministic physical guards.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.3.2-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.4.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-74%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-78%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -164,10 +164,15 @@ The plugin bundles the `/flash-dev` skill to structure collaboration between the
 
 ## Diagnostics and Telemetry
 
-### 1. Test Suite
-Run the 74-assertion diagnostic test suite:
+### 1. Automated Test & Concurrency Stress Suite
+Run the 78-assertion diagnostic test suite:
 ```bash
 node scripts/doctor.mjs
+```
+
+Run the multi-process concurrency stress & guard integration test suite:
+```bash
+node scripts/test-concurrency.mjs
 ```
 
 ### 2. Decision Review
@@ -214,7 +219,8 @@ pro-flash-orchestrator/
 │   ├── guard-read-file.mjs     # Read guard (slicing, dependency exemptions, multi-read deny)
 │   ├── guard-write-file.mjs    # Write guard (benchmark edits limit, multi-file write deny)
 │   ├── guard-command.mjs       # Command guard (unwrapping, redirection, dump blocks)
-│   ├── doctor.mjs              # 74-assertion automated test suite
+│   ├── doctor.mjs              # 78-assertion automated test suite
+│   ├── test-concurrency.mjs    # Concurrency stress & guard integration test suite
 │   └── report.mjs              # Production decision telemetry reviewer
 └── assets/
     └── logo.svg                # Plugin icon

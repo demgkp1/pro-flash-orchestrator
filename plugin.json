@@ -1,15 +1,15 @@
 {
   "name": "pro-flash-orchestrator",
-  "displayName": "Pro Architect + Flash Worker (v0.3.2)",
-  "version": "0.3.2",
+  "displayName": "Pro Architect + Flash Worker (v0.4.0)",
+  "version": "0.4.0",
   "license": "MIT",
-  "description": "v0.3.2 全场景通用主动分流工作流：适用于一切代码开发、Bug 排查、架构重构、代码审查、测试补齐与长文档研读。Pro 亲自把控核心决策与标杆实现；Hook 物理守门负责 pro 降级、汇报契约注入、递归/轮询阻断、大代码切片/多文件连读拦截、连续写入守门与命令防泄洪，并在新轮次精准瞬态唤醒。",
+  "description": "v0.4.0 全场景通用主动分流工作流：统一助手子代理为 Flash 模型，零功能损失 I/O 削减与会话单事务优化，严密锁定 mode.json 用户安全配置，物理守门负责 pro 降级、证据契约注入、递归/轮询阻断、大代码切片/多文件连读拦截、连续写入守门与命令防泄洪，并在新轮次精准瞬态唤醒。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",
   "suggestedPrompts": [
-    "/flash-dev 审查并修复当前项目中的 Bug 或性能隐患：先派 Flash-Lite 扫描定位多文件问题根因与行号，由你制定修复方案并改好核心逻辑，同轮派 Flash 补齐其余文件修改与回归测试",
+    "/flash-dev 审查并修复当前项目中的 Bug 或性能隐患：先派 Flash 扫描定位多文件问题根因与行号，由你制定修复方案并改好核心逻辑，同轮派 Flash 补齐其余文件修改与回归测试",
     "/flash-dev 开发一套新功能模块或工具脚本：由你设计核心接口、数据结构与标杆实现，同轮并发派发 Flash 扩写外围模块、CLI/API 绑定与单元测试",
-    "/flash-dev 帮我完成复杂工程/前端界面/算法任务：同轮派发 Flash-Lite 提取文档与现有代码结构，你亲自构建核心骨架或视觉基调，再交由 Flash 完成全量工程闭环"
+    "/flash-dev 帮我完成复杂工程/前端界面/算法任务：同轮派发 Flash 提取文档与现有代码结构，你亲自构建核心骨架或视觉基调，再交由 Flash 完成全量工程闭环"
   ]
 }
