@@ -61,6 +61,10 @@ function isExemptPath(file, payload) {
   if (
     lower.includes('/.gemini/antigravity/') ||
     lower.includes('\\.gemini\\antigravity\\') ||
+    lower.includes('/.gemini/antigravity-cli/') ||
+    lower.includes('\\.gemini\\antigravity-cli\\') ||
+    lower.includes('/.gemini/antigravity-ide/') ||
+    lower.includes('\\.gemini\\antigravity-ide\\') ||
     lower.includes('/.system_generated/') ||
     lower.includes('\\.system_generated\\')
   ) {

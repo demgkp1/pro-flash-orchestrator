@@ -51,13 +51,14 @@ function clean(value) {
 function artifactDir(payload) {
   const dir = String((payload && payload.artifactDirectoryPath) || '').trim();
   if (dir) return dir;
+  const tPath = String((payload && payload.transcriptPath) || '').trim();
+  const match = tPath.match(/^(.*[\\/]\.gemini[\\/](?:antigravity|antigravity-cli|antigravity-ide)[\\/]brain[\\/][^\\/]+)/i);
+  if (match) return match[1];
   const convId = String((payload && payload.conversationId) || '').trim();
   if (convId && convId !== 'unknown') {
-    return path.join(os.homedir(), '.gemini', 'antigravity', 'brain', convId);
+    const rootName = tPath.includes('antigravity-cli') ? 'antigravity-cli' : 'antigravity';
+    return path.join(os.homedir(), '.gemini', rootName, 'brain', convId);
   }
-  const tPath = String((payload && payload.transcriptPath) || '').trim();
-  const match = tPath.match(/^(.*[\\/]\.gemini[\\/]antigravity[\\/]brain[\\/][^\\/]+)/i);
-  if (match) return match[1];
   return path.join(os.homedir(), '.gemini', 'antigravity', 'brain', 'default');
 }
 
