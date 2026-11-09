@@ -104,7 +104,7 @@ function decide() {
 
   const convId = String(payload.conversationId || 'unknown');
   const uInput = lastUserInput(payload).trim();
-  const normFile = path.normalize(file);
+  const normFile = process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
   let shouldDeny = false;
   let currentList = [];
 

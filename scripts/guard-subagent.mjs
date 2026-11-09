@@ -127,7 +127,7 @@ function decide() {
 
   if (!sub) {
     if (tool === INVOKE) {
-      const convId = payload.conversationId;
+      const convId = String((payload && payload.conversationId) || '');
       const isDoctor = convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST);
       let quotaDeny = false;
       let denyReason = '';
@@ -240,6 +240,7 @@ function decide() {
 
   /* follow-up work sent to an existing sub-agent: re-assert the contract */
   if (tool === SEND) {
+    if (sub) return ALLOW;
     const recipient = clean(args.Recipient || args.recipient).toLowerCase();
     if (recipient === 'user') return ALLOW;
 

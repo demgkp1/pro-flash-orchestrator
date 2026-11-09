@@ -192,7 +192,7 @@ function decide() {
   if (CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext)) {
     const convId = String(payload.conversationId || 'unknown');
     const uInput = lastUserInput(payload).trim();
-    const normFile = path.normalize(file);
+    const normFile = process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
     let shouldDenyQuota = false;
     let currentReads = [];
     let quotaLimit = 3;

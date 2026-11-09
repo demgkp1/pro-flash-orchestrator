@@ -469,15 +469,12 @@ export function isExemptPath(file, payload) {
   const lower = file.toLowerCase();
   const segments = lower.split(/[\\/]+/);
   if (segments.some((segment) => EXEMPT_SEGMENTS.has(segment))) return true;
+  const unified = lower.replace(/\\/g, '/');
   if (
-    lower.includes('/.gemini/antigravity/') ||
-    lower.includes('\\.gemini\\antigravity\\') ||
-    lower.includes('/.gemini/antigravity-cli/') ||
-    lower.includes('\\.gemini\\antigravity-cli\\') ||
-    lower.includes('/.gemini/antigravity-ide/') ||
-    lower.includes('\\.gemini\\antigravity-ide\\') ||
-    lower.includes('/.system_generated/') ||
-    lower.includes('\\.system_generated\\')
+    unified.includes('/.gemini/antigravity/') ||
+    unified.includes('/.gemini/antigravity-cli/') ||
+    unified.includes('/.gemini/antigravity-ide/') ||
+    unified.includes('/.system_generated/')
   ) {
     return true;
   }

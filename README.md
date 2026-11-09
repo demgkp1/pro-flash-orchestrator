@@ -110,15 +110,15 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
 
 If you are developing the plugin inside a custom repository workspace (e.g., `~/projects/pro-flash-orchestrator`):
 
-- Windows:
+- Windows PowerShell (Run as Administrator or Developer Mode enabled):
   ```powershell
   cd <workspace-dir>
-  .\install.ps1
+  New-Item -ItemType Junction -Path "$env:USERPROFILE\.gemini\config\plugins\pro-flash-orchestrator" -Target (Get-Location)
   ```
 - macOS / Linux:
   ```bash
   cd <workspace-dir>
-  chmod +x ./install.sh && ./install.sh
+  ln -s "$(pwd)" "$HOME/.gemini/config/plugins/pro-flash-orchestrator"
   ```
 </details>
 
@@ -204,8 +204,6 @@ pro-flash-orchestrator/
 ├── LICENSE                     # MIT License
 ├── README.md                   # English technical documentation
 ├── README.zh-CN.md             # Chinese technical documentation
-├── install.ps1                 # Windows Junction installer
-├── install.sh                  # macOS/Linux symlink installer
 ├── rules/
 │   └── AGENTS.md               # Persistent roles and boundaries
 ├── skills/

@@ -34,7 +34,7 @@ const DOCTOR_STATE_DIR = path.join(TMP, 'state');
 fs.mkdirSync(DOCTOR_STATE_DIR, { recursive: true, mode: 0o700 });
 process.env.PRO_STATE_DIR = DOCTOR_STATE_DIR;
 
-const { isSubAgent, logDecision, STATE_DIR, ensureStateDir } = await import('./lib.mjs');
+const { isSubAgent, logDecision, STATE_DIR, ensureStateDir, isExemptPath } = await import('./lib.mjs');
 const { loadDecisions } = await import('./report.mjs');
 
 let passed = 0;
@@ -908,6 +908,81 @@ check('安全防护 S3：logDecision 对 Bearer token 与 sk- 密钥自动脱敏
   assert(logContent.includes('Bearer ***'), 'bearer token not masked with Bearer ***');
   assert(!logContent.includes('sk-proj123456789012345678901234567890'), 'sk- token leaked in log');
   assert(logContent.includes('sk-***'), 'sk- token not masked with sk-***');
+});
+
+/* ------------------------------------------------------------ v0.4.0 回归修复测试 */
+check('回归测试：convId undefined 派单不崩溃', () => {
+  const payload = {
+    modelName: 'pro',
+    lastUserInput: '测试派单',
+    toolCall: { name: 'invoke_subagent', args: { TypeName: 'research', Model: 'inherit', Prompt: '读一下文档' } },
+  };
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.decision === 'allow', `expected allow, got ${JSON.stringify(out)}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected rewrite to flash, got ${JSON.stringify(out.overwrite)}`);
+});
+
+check('回归测试：子代理 send_message 不追加契约', () => {
+  const payload = basePayload({
+    parentConversationId: 'doctor-parent-456',
+    toolCall: {
+      name: 'send_message',
+      args: { Recipient: 'doctor-parent-456', Message: '任务已完成，这是最终汇报' },
+    },
+  });
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.decision === 'allow', `expected allow, got ${JSON.stringify(out)}`);
+  assert(!out.overwrite, `subagent send_message should not overwrite/append contract, got: ${JSON.stringify(out.overwrite)}`);
+});
+
+check('回归测试：Windows 大小写不重复计入写入与读取限额', () => {
+  const convId = 'doctor-win-case-test';
+  const f1Upper = path.join(TMP, 'CaseFile1.js');
+  const f1Lower = path.join(TMP, 'casefile1.js');
+  const f2 = path.join(TMP, 'CaseFile2.js');
+  const f3 = path.join(TMP, 'CaseFile3.js');
+
+  // 1. 写入测试：第一次写 CaseFile1.js
+  const w1 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: f1Upper, Content: 'const x = 1;' } },
+  }));
+  assert(w1.decision === 'allow', `expected allow on 1st file: ${JSON.stringify(w1)}`);
+
+  // 第二次以不同大小写路径写同一文件 casefile1.js
+  const w1Again = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: f1Lower, Content: 'const x = 2;' } },
+  }));
+  assert(w1Again.decision === 'allow', `expected allow on same file with different case: ${JSON.stringify(w1Again)}`);
+
+  // 第三次写第二个不同文件 CaseFile2.js (应该放行，因为总数是2而不是3)
+  const w2 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: f2, Content: 'const y = 2;' } },
+  }));
+  assert(w2.decision === 'allow', `expected allow on 2nd distinct file: ${JSON.stringify(w2)}`);
+
+  // 第四次写第三个不同文件 CaseFile3.js (应该拦截)
+  const w3 = runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId,
+    toolCall: { name: 'write_file', args: { Path: f3, Content: 'const z = 3;' } },
+  }));
+  if (process.platform === 'win32') {
+    assert(w3.decision === 'deny', `expected deny on 3rd distinct file on win32: ${JSON.stringify(w3)}`);
+  }
+});
+
+check('回归测试：混杂斜杠系统路径正确豁免', () => {
+  const mixed1 = 'C:\\Users\\dkp/.gemini/antigravity\\brain/task.report.md';
+  const mixed2 = 'C:/Users/dkp\\.gemini\\antigravity-cli/config.json';
+  const mixed3 = 'D:\\Project\\.system_generated/tasks/task-1.log';
+  const mixed4 = 'C:\\Users\\dkp/.gemini/antigravity-ide\\workspace.json';
+
+  assert(isExemptPath(mixed1, basePayload()), `expected exempt for ${mixed1}`);
+  assert(isExemptPath(mixed2, basePayload()), `expected exempt for ${mixed2}`);
+  assert(isExemptPath(mixed3, basePayload()), `expected exempt for ${mixed3}`);
+  assert(isExemptPath(mixed4, basePayload()), `expected exempt for ${mixed4}`);
 });
 
 /* -------------------------------------------------------------------- done */

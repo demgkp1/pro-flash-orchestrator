@@ -109,15 +109,15 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
 
 若需在个人代码工作区（如 `~/projects/pro-flash-orchestrator`）内对插件进行二次开发：
 
-- Windows：
+- Windows PowerShell (以管理员运行或已启用开发者模式):
   ```powershell
   cd <工作区目录>
-  .\install.ps1
+  New-Item -ItemType Junction -Path "$env:USERPROFILE\.gemini\config\plugins\pro-flash-orchestrator" -Target (Get-Location)
   ```
 - macOS / Linux：
   ```bash
   cd <工作区目录>
-  chmod +x ./install.sh && ./install.sh
+  ln -s "$(pwd)" "$HOME/.gemini/config/plugins/pro-flash-orchestrator"
   ```
 </details>
 
@@ -203,8 +203,6 @@ pro-flash-orchestrator/
 ├── LICENSE                     # MIT 开源许可证
 ├── README.md                   # 英文说明文档
 ├── README.zh-CN.md             # 中文说明文档
-├── install.ps1                 # Windows 快速挂载脚本
-├── install.sh                  # macOS/Linux 快速挂载脚本
 ├── rules/
 │   └── AGENTS.md               # 常驻主创与助手职责规范
 ├── skills/
