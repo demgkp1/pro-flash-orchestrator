@@ -961,15 +961,16 @@ check('回归测试：Windows 大小写不重复计入写入与读取限额', ()
     conversationId: convId,
     toolCall: { name: 'write_file', args: { Path: f2, Content: 'const y = 2;' } },
   }));
-  assert(w2.decision === 'allow', `expected allow on 2nd distinct file: ${JSON.stringify(w2)}`);
-
-  // 第四次写第三个不同文件 CaseFile3.js (应该拦截)
-  const w3 = runHook('guard-write-file.mjs', basePayload({
-    conversationId: convId,
-    toolCall: { name: 'write_file', args: { Path: f3, Content: 'const z = 3;' } },
-  }));
   if (process.platform === 'win32') {
+    assert(w2.decision === 'allow', `expected allow on 2nd distinct file: ${JSON.stringify(w2)}`);
+    // 第四次写第三个不同文件 CaseFile3.js (应该拦截)
+    const w3 = runHook('guard-write-file.mjs', basePayload({
+      conversationId: convId,
+      toolCall: { name: 'write_file', args: { Path: f3, Content: 'const z = 3;' } },
+    }));
     assert(w3.decision === 'deny', `expected deny on 3rd distinct file on win32: ${JSON.stringify(w3)}`);
+  } else {
+    assert(w2.decision === 'deny', `expected deny on 3rd distinct case-sensitive file on non-win32: ${JSON.stringify(w2)}`);
   }
 });
 
