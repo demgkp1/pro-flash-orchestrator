@@ -5,9 +5,9 @@ A dual-tier model orchestration engine for Google Antigravity.
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. Keeps the flagship Pro model focused on core decisions and benchmark implementations, while offloading peripheral implementation, unit tests, and document exploration uniformly to Flash subagents (flash_lite retired). All governance policies are enforced at the runtime lifecycle Hook level via deterministic physical guards.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.4.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.4.1-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-78%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-82%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 

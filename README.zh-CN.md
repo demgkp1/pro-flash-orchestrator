@@ -5,9 +5,9 @@
 面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；所有助手子代理统一使用 Flash 模型负责外围工程扩写、测试用例编写与文档检索（取消 flash_lite）。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.4.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.4.1-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Tests-78%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Tests-82%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 

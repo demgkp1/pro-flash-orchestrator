@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v0.4.0)
+ * SessionStart hook (v0.4.1)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -14,7 +14,7 @@ import { currentMode, isSubAgent, logDecision, output, pruneStaleSessions, readP
 const RULES = '[Pro-Flash Orchestrator Active]';
 
 const CARD = [
-  '**Pro-Flash Orchestrator v0.4.0 已接管本会话**',
+  '**Pro-Flash Orchestrator v0.4.1 已接管本会话**',
   '',
   '| 守门 | 行为 |',
   '| --- | --- |',
@@ -54,7 +54,7 @@ if (mode === 'off') {
           // whole hook result (verified against language_server 2026-11-06).
           // renderInfo is the supported way to render a card to the user.
           renderInfo: {
-            title: 'Pro-Flash Orchestrator v0.4.0',
+            title: 'Pro-Flash Orchestrator v0.4.1',
             titlePrefix: '已接管',
             markdown: CARD,
           },

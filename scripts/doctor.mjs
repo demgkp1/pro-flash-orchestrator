@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pro-Flash Orchestrator v0.4.0 — doctor
+ * Pro-Flash Orchestrator v0.4.1 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -93,7 +93,7 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v0.4.0 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.4.1 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('hooks.json 可解析，且引用的脚本都存在', () => {
