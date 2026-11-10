@@ -14,6 +14,8 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   ALLOW,
+  STATE_DIR,
+  getHarness,
   currentMode,
   getArgs,
   isSubAgent,
@@ -24,6 +26,7 @@ import {
   readPayload,
   readSession,
   setContext,
+  targetWorkerModel,
   toolName,
   updateSession,
   writeSession,
@@ -50,6 +53,10 @@ function clean(value) {
 function artifactDir(payload) {
   const dir = String((payload && payload.artifactDirectoryPath) || '').trim();
   if (dir) return dir;
+  if (getHarness() !== 'antigravity') {
+    const rawConv = String((payload && payload.conversationId) || '').trim() || 'default';
+    return path.join(STATE_DIR, 'reports', rawConv.replace(/[<>:"/\\|?*]/g, '_'));
+  }
   const tPath = String((payload && payload.transcriptPath) || '').trim();
   const match = tPath.match(/^(.*[\\/]\.gemini[\\/](?:antigravity|antigravity-cli|antigravity-ide)[\\/]brain[\\/][^\\/]+)/i);
   if (match) return match[1];
@@ -162,7 +169,9 @@ function decide() {
           return mode === 'enforce' ? { decision: 'deny', reason: denyReason } : ALLOW;
         }
 
-        markSubagentSpawn(convId);
+        if (getHarness() === 'antigravity') {
+          markSubagentSpawn(convId);
+        }
       }
     } else if (tool === SEND) {
       updateSession(payload.conversationId, (state) => {
@@ -191,8 +200,10 @@ function decide() {
     const currentModel = String((payload && payload.modelName) || '').toLowerCase();
 
     if (!forced) {
-      if (lower !== 'flash' || args.Model !== 'flash') {
-        overwrite.Model = 'flash';
+      const targetModel = targetWorkerModel();
+      const targetLower = targetModel.toLowerCase();
+      if (lower !== targetLower || args.Model !== targetModel) {
+        overwrite.Model = targetModel;
       }
     }
 

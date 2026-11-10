@@ -203,16 +203,195 @@ export function checkAndClaimSubagent(convId) {
 const MODES = new Set(['off', 'shadow', 'enforce']);
 const MAX_LOG_BYTES = 1024 * 1024;
 
+let CTX = null;
+let HARNESS = 'antigravity';
+
+/* ---------------------------------------------------------- harness adapter */
+
+export function detectHarness(rawPayload) {
+  const raw = rawPayload && typeof rawPayload === 'object' ? rawPayload : null;
+  if (!raw) return 'antigravity';
+  if (raw.hook_event_name || raw.session_id || raw.tool_name) {
+    if (
+      String(raw.model || '').match(/gpt|codex|o1|o3|o4/i) ||
+      'turn_id' in raw ||
+      Boolean(process.env.CODEX_HOME)
+    ) {
+      return 'codex';
+    }
+    return 'claude';
+  }
+  return 'antigravity';
+}
+
+export function getHarness() {
+  return HARNESS;
+}
+
+export function targetWorkerModel(harness = HARNESS) {
+  if (process.env.PRO_WORKER_MODEL) return process.env.PRO_WORKER_MODEL;
+  if (harness === 'claude') return 'haiku';
+  if (harness === 'codex') return 'gpt-5-mini';
+  return 'flash';
+}
+
+function splitArgsCommand(cmd) {
+  if (Array.isArray(cmd)) {
+    return cmd
+      .map((part) => {
+        const s = String(part ?? '');
+        return /\s/.test(s) ? JSON.stringify(s) : s;
+      })
+      .join(' ');
+  }
+  return String(cmd || '');
+}
+
+function extractApplyPatchPath(input) {
+  const text = String((input && (input.patch || input.input)) || '');
+  const match = text.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m);
+  return match ? match[1].trim() : '';
+}
+
+export function normalizeIncomingPayload(raw, harness = HARNESS) {
+  if (!raw || typeof raw !== 'object') return {};
+  if (harness !== 'claude' && harness !== 'codex') return raw;
+
+  raw._harness = harness;
+  if (raw.tool_name !== undefined && raw._rawToolName === undefined) {
+    raw._rawToolName = raw.tool_name;
+  }
+  if (raw._rawToolInput === undefined) {
+    raw._rawToolInput =
+      raw.tool_input && typeof raw.tool_input === 'object' ? { ...raw.tool_input } : {};
+  }
+
+  const subId = raw.agent_id || raw.parent_tool_use_id || (raw.is_subagent ? 'sub' : '');
+  if (!raw.conversationId) {
+    raw.conversationId = subId
+      ? `${raw.session_id || 'unknown'}:sub:${subId}`
+      : raw.session_id || 'unknown';
+  }
+  if (subId && !raw.parentConversationId) {
+    raw.parentConversationId = String(raw.session_id || 'parent');
+  }
+  if (!raw.workspacePaths) {
+    raw.workspacePaths = raw.cwd ? [raw.cwd] : [process.cwd()];
+  }
+  if (raw.transcriptPath === undefined) {
+    raw.transcriptPath = raw.transcript_path || '';
+  }
+  if (raw.modelName === undefined) {
+    raw.modelName = raw.model || '';
+  }
+  if (raw.lastUserInput === undefined) {
+    raw.lastUserInput = raw.prompt || raw.user_prompt || '';
+  }
+  if (!raw.lastUserInput && raw.conversationId && raw.conversationId !== 'unknown') {
+    const sess = readSession(raw.session_id || raw.conversationId);
+    if (sess && sess.lastUserInput) {
+      raw.lastUserInput = sess.lastUserInput;
+    }
+  }
+
+  if (!raw.toolCall && raw.tool_name) {
+    const rawTool = String(raw.tool_name);
+    const input = raw.tool_input && typeof raw.tool_input === 'object' ? raw.tool_input : {};
+
+    if (rawTool === 'Read' || rawTool === 'read_file' || rawTool === 'view_file') {
+      const filePath = input.file_path || input.path || input.AbsolutePath || input.Path || input.FilePath || '';
+      const args = {
+        ...input,
+        ...(filePath ? { AbsolutePath: filePath, Path: filePath, filePath } : {}),
+      };
+      if (input.offset !== undefined || input.limit !== undefined) {
+        const startLine = Number(input.offset || 1);
+        if (Number.isFinite(startLine)) {
+          args.StartLine = startLine;
+          if (input.limit !== undefined && input.limit !== null && Number(input.limit) > 0) {
+            args.EndLine = startLine + Number(input.limit) - 1;
+          }
+        }
+      }
+      raw.toolCall = { name: 'read_file', args };
+    } else if (
+      rawTool === 'Write' ||
+      rawTool === 'Edit' ||
+      rawTool === 'MultiEdit' ||
+      rawTool === 'apply_patch' ||
+      rawTool === 'write_file' ||
+      rawTool === 'edit_file'
+    ) {
+      const targetPath =
+        input.file_path ||
+        input.path ||
+        input.Path ||
+        input.AbsolutePath ||
+        input.TargetFile ||
+        (rawTool === 'apply_patch' ? extractApplyPatchPath(input) : '') ||
+        '';
+      raw.toolCall = {
+        name: 'write_file',
+        args: {
+          ...input,
+          ...(targetPath ? { Path: targetPath } : {}),
+        },
+      };
+    } else if (
+      rawTool === 'Bash' ||
+      rawTool === 'shell' ||
+      rawTool === 'exec_command' ||
+      rawTool === 'run_command'
+    ) {
+      const cmd = splitArgsCommand(input.command || input.cmd || input.CommandLine || input.Command || '');
+      raw.toolCall = {
+        name: 'run_command',
+        args: { ...input, CommandLine: cmd },
+      };
+    } else if (
+      rawTool === 'Task' ||
+      rawTool === 'Agent' ||
+      rawTool === 'spawn_agent' ||
+      rawTool === 'invoke_subagent'
+    ) {
+      const subType = String(input.subagent_type || input.agent_type || input.TypeName || 'self').toLowerCase();
+      const typeName =
+        subType.includes('explore') || subType.includes('research') || subType.includes('plan')
+          ? 'research'
+          : 'self';
+      const model = input.model || input.Model || 'inherit';
+      const prompt = input.prompt !== undefined ? input.prompt : input.Prompt !== undefined ? input.Prompt : '';
+      raw.toolCall = {
+        name: 'invoke_subagent',
+        args: {
+          ...input,
+          TypeName: typeName,
+          Model: model,
+          Prompt: String(prompt || ''),
+        },
+      };
+    } else {
+      raw.toolCall = { name: rawTool, args: { ...input } };
+    }
+  }
+
+  return raw;
+}
+
 /* ------------------------------------------------------------------ input */
 
 export function readPayload() {
+  HARNESS = 'antigravity';
   try {
     if (process.stdin.isTTY) return {};
     const raw = fs.readFileSync(0, 'utf8');
     if (!raw || !raw.trim()) return {};
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object') return {};
+    HARNESS = detectHarness(parsed);
+    return normalizeIncomingPayload(parsed, HARNESS);
   } catch {
+    HARNESS = 'antigravity';
     return {};
   }
 }
@@ -324,21 +503,21 @@ export function isSubAgent(payload) {
 
     if (!isDoctor && sess && sess.isSubAgent === true) return true;
     if (p.parentConversationId) {
-      if (convId && convId !== 'unknown' && !isDoctor) {
+      if (convId && convId !== 'unknown' && !isDoctor && HARNESS === 'antigravity') {
         writeSession(convId, { ...sess, isSubAgent: true });
       }
       return true;
     }
     const ctx = p.callerContext;
     if (ctx && typeof ctx === 'object' && ctx.parentConversationId) {
-      if (convId && convId !== 'unknown' && !isDoctor) {
+      if (convId && convId !== 'unknown' && !isDoctor && HARNESS === 'antigravity') {
         writeSession(convId, { ...sess, isSubAgent: true });
       }
       return true;
     }
     if (!isDoctor && sess && sess.isSubAgent === false) return false;
 
-    const verdict = transcriptVerdict(p.transcriptPath);
+    const verdict = HARNESS === 'antigravity' ? transcriptVerdict(p.transcriptPath) : null;
     if (verdict === true) {
       if (convId && convId !== 'unknown' && !isDoctor) {
         writeSession(convId, { ...sess, isSubAgent: true });
@@ -354,7 +533,7 @@ export function isSubAgent(payload) {
       return false;
     }
 
-    if (!isDoctor && verdict === null) {
+    if (!isDoctor && HARNESS === 'antigravity' && verdict === null) {
       try {
         const claim = checkAndClaimSubagent(convId);
         if (claim && claim.isSubAgent) {
@@ -518,10 +697,14 @@ export function maskSecrets(value) {
 }
 
 /** Hooks call this once so every log line carries the conversation id. */
-let CTX = null;
 
 export function setContext(payload) {
   CTX = payload || null;
+  if (payload && typeof payload === 'object') {
+    HARNESS = payload._harness || detectHarness(payload);
+  } else {
+    HARNESS = 'antigravity';
+  }
 }
 
 export function logDecision(entry) {
@@ -554,9 +737,128 @@ export function logDecision(entry) {
   }
 }
 
+export function translateOutput(obj) {
+  if (HARNESS !== 'claude' && HARNESS !== 'codex') {
+    return obj;
+  }
+
+  const out = obj && typeof obj === 'object' ? obj : {};
+  const ctx = CTX && typeof CTX === 'object' ? CTX : {};
+  const eventName = String(ctx.hook_event_name || '');
+  const isPreToolUse =
+    eventName === 'PreToolUse' ||
+    out.decision === 'deny' ||
+    out.decision === 'allow' ||
+    Boolean(!eventName && (ctx._rawToolName || ctx.tool_name));
+
+  if (isPreToolUse) {
+    if (out.decision === 'deny') {
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: String(out.reason || ''),
+        },
+      };
+    }
+
+    if (out.decision === 'allow' && out.overwrite && typeof out.overwrite === 'object') {
+      const rawInput =
+        ctx._rawToolInput && typeof ctx._rawToolInput === 'object' ? ctx._rawToolInput : {};
+      const rawTool = String(ctx._rawToolName || ctx.tool_name || '');
+      const updatedInput = { ...rawInput };
+
+      if (
+        rawTool === 'Read' ||
+        rawTool === 'read_file' ||
+        rawTool === 'view_file' ||
+        'file_path' in rawInput
+      ) {
+        const hasStart = out.overwrite.StartLine !== undefined;
+        const hasEnd = out.overwrite.EndLine !== undefined;
+        if (hasStart || hasEnd) {
+          const start = hasStart
+            ? Number(out.overwrite.StartLine)
+            : Number(
+                rawInput.offset ??
+                  (ctx.toolCall && ctx.toolCall.args && ctx.toolCall.args.StartLine) ??
+                  1
+              );
+          if (Number.isFinite(start)) {
+            updatedInput.offset = start;
+          }
+          if (hasEnd) {
+            const end = Number(out.overwrite.EndLine);
+            if (Number.isFinite(end) && Number.isFinite(start)) {
+              updatedInput.limit = Math.max(1, end - start + 1);
+            }
+          }
+        }
+      } else if (
+        rawTool === 'Task' ||
+        rawTool === 'Agent' ||
+        rawTool === 'spawn_agent' ||
+        rawTool === 'invoke_subagent'
+      ) {
+        if (out.overwrite.Model !== undefined) {
+          updatedInput.model = targetWorkerModel();
+        }
+        const nextPrompt =
+          out.overwrite.Prompt !== undefined ? out.overwrite.Prompt : out.overwrite.prompt;
+        if (nextPrompt !== undefined) {
+          updatedInput.prompt = nextPrompt;
+        }
+      } else {
+        Object.assign(updatedInput, out.overwrite);
+      }
+
+      return {
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'allow',
+          updatedInput,
+        },
+      };
+    }
+
+    return {};
+  }
+
+  if (Array.isArray(out.injectSteps) && out.injectSteps.length > 0) {
+    const parts = [];
+    for (const step of out.injectSteps) {
+      if (!step || typeof step !== 'object') continue;
+      if (typeof step.ephemeralMessage === 'string' && step.ephemeralMessage.trim()) {
+        parts.push(step.ephemeralMessage.trim());
+      } else if (step.systemMessage && typeof step.systemMessage === 'object') {
+        const sysMsg =
+          typeof step.systemMessage.systemMessage === 'string' &&
+          step.systemMessage.systemMessage.trim()
+            ? step.systemMessage.systemMessage.trim()
+            : step.systemMessage.renderInfo &&
+                typeof step.systemMessage.renderInfo.markdown === 'string'
+              ? step.systemMessage.renderInfo.markdown.trim()
+              : '';
+        if (sysMsg) parts.push(sysMsg);
+      }
+    }
+    const text = parts.join('\n\n');
+    if (text) {
+      return {
+        hookSpecificOutput: {
+          hookEventName: eventName || 'UserPromptSubmit',
+          additionalContext: text,
+        },
+      };
+    }
+  }
+
+  return {};
+}
+
 export function output(obj) {
   try {
-    process.stdout.write(JSON.stringify(obj));
+    process.stdout.write(JSON.stringify(translateOutput(obj)));
   } catch {
     /* ignore */
   }

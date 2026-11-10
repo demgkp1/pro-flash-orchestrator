@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (optional, e.g. v0.5.0)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Package and Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run test gates
+        run: |
+          node scripts/doctor.mjs
+          node scripts/test-concurrency.mjs
+
+      - name: Package release archive
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            node scripts/package.mjs --out-dir dist --tag "${{ inputs.tag }}"
+          else
+            node scripts/package.mjs --out-dir dist
+          fi
+
+      - name: Verify archive layout
+        run: |
+          unzip -l dist/*.zip
+          BAD_ENTRIES=$(unzip -Z1 dist/*.zip | grep -v '^pro-flash-orchestrator/' || true)
+          if [ -n "$BAD_ENTRIES" ]; then
+            echo "Error: Found archive entries outside pro-flash-orchestrator/:"
+            echo "$BAD_ENTRIES"
+            exit 1
+          fi
+          echo "Verified: all entries start with pro-flash-orchestrator/"
+
+      - name: Create or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber || gh release create "$GITHUB_REF_NAME" dist/*.zip --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --generate-notes

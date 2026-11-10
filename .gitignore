@@ -4,4 +4,6 @@ node_modules/
 *.log
 *.tmpdir
 .*.tmp*
+dist/
+*.zip
 

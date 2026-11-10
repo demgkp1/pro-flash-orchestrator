@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
-  "displayName": "Pro Architect + Flash Worker (v0.4.1)",
-  "version": "0.4.1",
+  "displayName": "Pro Architect + Flash Worker (v0.5.0)",
+  "version": "0.5.0",
   "license": "MIT",
-  "description": "v0.4.1 全场景通用主动分流工作流：统一助手子代理为 Flash 模型，零功能损失 I/O 削减与会话单事务优化，严密锁定 mode.json 用户安全配置，物理守门负责 pro 降级、证据契约注入、递归/轮询阻断、大代码切片/多文件连读拦截、连续写入守门与命令防泄洪，并在新轮次精准瞬态唤醒。",
+  "description": "v0.5.0 全场景通用主动分流与跨平台适配器（Antigravity / Claude Code / Codex CLI）：自动归一化跨平台生命周期 Hook 与轻量助手模型（flash / haiku / gpt-5-mini），严密锁定 mode.json 用户安全配置，物理守门负责模型降级、证据契约注入、递归/轮询阻断、大代码切片/多文件连读拦截、连续写入守门与命令防泄洪，并在新轮次精准瞬态唤醒。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",

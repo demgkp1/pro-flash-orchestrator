@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/session-start.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/pre-invocation.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Task|Agent|spawn_agent|invoke_subagent|send_message|manage_subagents",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/guard-subagent.mjs",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit|apply_patch|write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/guard-write-file.mjs",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Read|read_file|view_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/guard-read-file.mjs",
+            "timeout": 5
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|shell|exec_command|run_command",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node <plugin_dir>/scripts/guard-command.mjs",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

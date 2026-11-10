@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pro-Flash Orchestrator v0.4.1 — doctor
+ * Pro-Flash Orchestrator v0.5.0 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -93,7 +93,7 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v0.4.1 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.5.0 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('hooks.json 可解析，且引用的脚本都存在', () => {
@@ -983,6 +983,212 @@ check('回归测试：混杂斜杠系统路径正确豁免', () => {
   assert(isExemptPath(mixed2, basePayload()), `expected exempt for ${mixed2}`);
   assert(isExemptPath(mixed3, basePayload()), `expected exempt for ${mixed3}`);
   assert(isExemptPath(mixed4, basePayload()), `expected exempt for ${mixed4}`);
+});
+
+/* ------------------------------------------------------------ 跨平台协议自检 (Claude Code & Codex CLI) */
+check('跨平台协议：Claude Code Read 大代码文件自动切片', () => {
+  const codeFile = writeFixture('claude-slice-test.js', 500);
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    session_id: 'claude-read-slice-session',
+    tool_name: 'Read',
+    tool_input: { file_path: codeFile },
+  };
+  const out = runHook('guard-read-file.mjs', payload);
+  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
+  assert(out.hookSpecificOutput.hookEventName === 'PreToolUse', `expected hookEventName === PreToolUse, got ${out.hookSpecificOutput.hookEventName}`);
+  assert(out.hookSpecificOutput.permissionDecision === 'allow', `expected permissionDecision === allow, got ${out.hookSpecificOutput.permissionDecision}`);
+  assert(out.hookSpecificOutput.updatedInput, 'expected updatedInput in hookSpecificOutput');
+  assert(out.hookSpecificOutput.updatedInput.offset === 1, `expected offset === 1, got ${out.hookSpecificOutput.updatedInput.offset}`);
+  assert(out.hookSpecificOutput.updatedInput.limit === 150, `expected limit === 150, got ${out.hookSpecificOutput.updatedInput.limit}`);
+  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Claude Code Write 第 3 个非豁免文件拦截', () => {
+  const claudeStateDir = path.join(TMP, 'claude-write-state');
+  fs.mkdirSync(claudeStateDir, { recursive: true, mode: 0o700 });
+  const f1 = path.join(TMP, 'claude-w1.js');
+  const f2 = path.join(TMP, 'claude-w2.js');
+  const f3 = path.join(TMP, 'claude-w3.js');
+  const claudeSessionId = 'claude-write-isolated-session';
+  const claudeEnv = { PRO_STATE_DIR: claudeStateDir, PRO_TEST: '', ARGON_TEST: '' };
+
+  const payloadFor = (filePath) => ({
+    hook_event_name: 'PreToolUse',
+    session_id: claudeSessionId,
+    tool_name: 'Write',
+    tool_input: { file_path: filePath, content: 'export const x = 1;' },
+  });
+
+  const w1 = runHook('guard-write-file.mjs', payloadFor(f1), claudeEnv);
+  assert(Object.keys(w1).length === 0, `expected {} on 1st write, got ${JSON.stringify(w1)}`);
+
+  const w2 = runHook('guard-write-file.mjs', payloadFor(f2), claudeEnv);
+  assert(Object.keys(w2).length === 0, `expected {} on 2nd write, got ${JSON.stringify(w2)}`);
+
+  const w3 = runHook('guard-write-file.mjs', payloadFor(f3), claudeEnv);
+  assert(w3.hookSpecificOutput, `expected hookSpecificOutput on 3rd write, got ${JSON.stringify(w3)}`);
+  assert(w3.hookSpecificOutput.permissionDecision === 'deny', `expected deny on 3rd write, got ${w3.hookSpecificOutput.permissionDecision}`);
+  assert(typeof w3.hookSpecificOutput.permissionDecisionReason === 'string' && w3.hookSpecificOutput.permissionDecisionReason.length > 0, 'expected permissionDecisionReason');
+  assert(w3.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(w3.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Claude Code Task (model: opus) 重写为 haiku 并注入契约', () => {
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    session_id: 'claude-task-session',
+    tool_name: 'Task',
+    tool_input: { model: 'opus', prompt: '请帮我实现登录页面' },
+  };
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
+  assert(out.hookSpecificOutput.permissionDecision === 'allow', `expected allow, got ${out.hookSpecificOutput.permissionDecision}`);
+  assert(out.hookSpecificOutput.updatedInput, 'expected updatedInput');
+  assert(out.hookSpecificOutput.updatedInput.model === 'haiku', `expected haiku, got ${out.hookSpecificOutput.updatedInput.model}`);
+  assert(out.hookSpecificOutput.updatedInput.prompt.includes('[FLASH-WORKER]'), 'prompt should include [FLASH-WORKER]');
+  assert(out.hookSpecificOutput.updatedInput.prompt.includes('[PRO-CONTRACT]'), 'prompt should include [PRO-CONTRACT]');
+  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Claude Code Agent (subagent_type: Explore) 映射研究契约并保留原字段', () => {
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    session_id: 'claude-agent-session',
+    tool_name: 'Agent',
+    tool_input: { subagent_type: 'Explore', prompt: '调研代码架构', description: '探路代理' },
+  };
+  const out = runHook('guard-subagent.mjs', payload);
+  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
+  assert(out.hookSpecificOutput.permissionDecision === 'allow', `expected allow, got ${out.hookSpecificOutput.permissionDecision}`);
+  assert(out.hookSpecificOutput.updatedInput, 'expected updatedInput');
+  assert(out.hookSpecificOutput.updatedInput.model === 'haiku', `expected haiku, got ${out.hookSpecificOutput.updatedInput.model}`);
+  assert(out.hookSpecificOutput.updatedInput.prompt.includes('结构化摘要'), 'prompt should include 结构化摘要');
+  assert(out.hookSpecificOutput.updatedInput.description === '探路代理', `expected description preserved, got ${out.hookSpecificOutput.updatedInput.description}`);
+  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Codex CLI Bash 读取 mode.json 拦截', () => {
+  const payload = {
+    hook_event_name: 'PreToolUse',
+    session_id: 'codex-bash-session',
+    turn_id: 'turn-1',
+    model: 'gpt-5',
+    tool_name: 'Bash',
+    tool_input: { command: 'cat .state/mode.json' },
+  };
+  const out = runHook('guard-command.mjs', payload);
+  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
+  assert(out.hookSpecificOutput.permissionDecision === 'deny', `expected deny, got ${out.hookSpecificOutput.permissionDecision}`);
+  assert(typeof out.hookSpecificOutput.permissionDecisionReason === 'string' && out.hookSpecificOutput.permissionDecisionReason.length > 0, 'expected permissionDecisionReason');
+  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Codex CLI SessionStart 与 spawn_agent 重写', () => {
+  const startPayload = {
+    hook_event_name: 'SessionStart',
+    session_id: 'codex-start-session',
+    turn_id: 'turn-0',
+    model: 'gpt-5',
+  };
+  const outStart = runHook('session-start.mjs', startPayload);
+  assert(outStart.hookSpecificOutput, `expected hookSpecificOutput for SessionStart, got ${JSON.stringify(outStart)}`);
+  assert(outStart.hookSpecificOutput.hookEventName === 'SessionStart', `expected SessionStart, got ${outStart.hookSpecificOutput.hookEventName}`);
+  assert(outStart.hookSpecificOutput.additionalContext && outStart.hookSpecificOutput.additionalContext.includes('Pro-Flash Orchestrator Active'), 'expected Pro-Flash Orchestrator Active in additionalContext');
+  assert(outStart.suppressOutput === undefined, 'SessionStart top-level should not contain suppressOutput');
+  assert(outStart.hookSpecificOutput.suppressOutput === undefined, 'SessionStart hookSpecificOutput should not contain suppressOutput');
+
+  const spawnPayload = {
+    hook_event_name: 'PreToolUse',
+    session_id: 'codex-spawn-session',
+    turn_id: 'turn-1',
+    model: 'gpt-5',
+    tool_name: 'spawn_agent',
+    tool_input: { model: 'gpt-5', prompt: '执行工程重构' },
+  };
+  const outSpawn = runHook('guard-subagent.mjs', spawnPayload);
+  assert(outSpawn.hookSpecificOutput, `expected hookSpecificOutput for spawn_agent, got ${JSON.stringify(outSpawn)}`);
+  assert(outSpawn.hookSpecificOutput.permissionDecision === 'allow', `expected allow, got ${outSpawn.hookSpecificOutput.permissionDecision}`);
+  assert(outSpawn.hookSpecificOutput.updatedInput, 'expected updatedInput in spawn_agent');
+  assert(outSpawn.hookSpecificOutput.updatedInput.model === 'gpt-5-mini', `expected gpt-5-mini, got ${outSpawn.hookSpecificOutput.updatedInput.model}`);
+  assert(outSpawn.hookSpecificOutput.updatedInput.prompt.includes('[PRO-CONTRACT]'), 'spawn_agent prompt should include [PRO-CONTRACT]');
+  assert(outSpawn.suppressOutput === undefined, 'spawn_agent top-level should not contain suppressOutput');
+  assert(outSpawn.hookSpecificOutput.suppressOutput === undefined, 'spawn_agent hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Claude Code Prompt 会话回填 [FORCE-PRO] 保留 opus', () => {
+  const claudeForceDir = path.join(TMP, 'claude-force-pro-state');
+  fs.mkdirSync(claudeForceDir, { recursive: true, mode: 0o700 });
+  const claudeEnv = { PRO_STATE_DIR: claudeForceDir, PRO_TEST: '', ARGON_TEST: '' };
+  const sessionId = 'claude-force-pro-session';
+
+  const promptPayload = {
+    hook_event_name: 'UserPromptSubmit',
+    session_id: sessionId,
+    prompt: '请使用 [FORCE-PRO] 派发核心任务',
+  };
+  runHook('pre-invocation.mjs', promptPayload, claudeEnv);
+
+  const taskPayload = {
+    hook_event_name: 'PreToolUse',
+    session_id: sessionId,
+    tool_name: 'Task',
+    tool_input: { model: 'opus', prompt: '完成核心架构设计' },
+  };
+  const out = runHook('guard-subagent.mjs', taskPayload, claudeEnv);
+
+  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
+  assert(out.hookSpecificOutput.permissionDecision === 'allow', `expected allow, got ${out.hookSpecificOutput.permissionDecision}`);
+  assert(out.hookSpecificOutput.updatedInput, 'expected updatedInput');
+  assert(out.hookSpecificOutput.updatedInput.model === 'opus', `expected model === opus (not downgraded to haiku), got ${out.hookSpecificOutput.updatedInput.model}`);
+  assert(out.hookSpecificOutput.updatedInput.prompt.includes('[PRO-CONTRACT]'), 'expected updatedInput.prompt to include [PRO-CONTRACT]');
+  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
+  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+});
+
+check('跨平台协议：Claude Code 共享 session_id 子代理隔离与 artifactDir 独立报告路径', () => {
+  const claudeSubDir = path.join(TMP, 'claude-sub-state');
+  fs.mkdirSync(claudeSubDir, { recursive: true, mode: 0o700 });
+  const claudeSubEnv = { PRO_STATE_DIR: claudeSubDir, PRO_TEST: '', ARGON_TEST: '' };
+  const sessionId = 'claude-sub-shared-session';
+
+  const subPayload = {
+    hook_event_name: 'PreToolUse',
+    session_id: sessionId,
+    agent_id: 'sub-1',
+    tool_name: 'Task',
+    tool_input: { model: 'opus', prompt: '子代理尝试再次派发' },
+  };
+  const subOut = runHook('guard-subagent.mjs', subPayload, claudeSubEnv);
+  assert(subOut.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(subOut)}`);
+  assert(subOut.hookSpecificOutput.permissionDecision === 'deny', `expected deny, got ${subOut.hookSpecificOutput.permissionDecision}`);
+  assert(typeof subOut.hookSpecificOutput.permissionDecisionReason === 'string' && subOut.hookSpecificOutput.permissionDecisionReason.length > 0, 'expected permissionDecisionReason');
+  assert(subOut.suppressOutput === undefined, 'subOut top-level should not contain suppressOutput');
+  assert(subOut.hookSpecificOutput.suppressOutput === undefined, 'subOut hookSpecificOutput should not contain suppressOutput');
+
+  const mainPayload = {
+    hook_event_name: 'PreToolUse',
+    session_id: sessionId,
+    tool_name: 'Task',
+    tool_input: { model: 'opus', prompt: '主控派发工程任务' },
+  };
+  const mainOut = runHook('guard-subagent.mjs', mainPayload, claudeSubEnv);
+  assert(mainOut.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(mainOut)}`);
+  assert(mainOut.hookSpecificOutput.permissionDecision === 'allow', `expected allow, got ${mainOut.hookSpecificOutput.permissionDecision}`);
+  assert(mainOut.hookSpecificOutput.updatedInput, 'expected updatedInput');
+  assert(mainOut.hookSpecificOutput.updatedInput.model === 'haiku', `expected haiku, got ${mainOut.hookSpecificOutput.updatedInput.model}`);
+
+  const match = mainOut.hookSpecificOutput.updatedInput.prompt.match(/完整报告写入 `([^`]+)`/);
+  const reportPath = match ? match[1] : '';
+  assert(reportPath.includes('reports'), `expected report path to contain reports, got ${reportPath}`);
+  assert(!reportPath.toLowerCase().includes('.gemini'), `expected report path not to contain .gemini, got ${reportPath}`);
+  assert(!reportPath.toLowerCase().includes('antigravity'), `expected report path not to contain antigravity, got ${reportPath}`);
+  assert(mainOut.suppressOutput === undefined, 'mainOut top-level should not contain suppressOutput');
+  assert(mainOut.hookSpecificOutput.suppressOutput === undefined, 'mainOut hookSpecificOutput should not contain suppressOutput');
 });
 
 /* -------------------------------------------------------------------- done */

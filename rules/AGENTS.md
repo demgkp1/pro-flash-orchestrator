@@ -1,4 +1,4 @@
-# Pro 主控 + Flash 助手 (v0.4.1 全场景通用)
+# Pro 主控 + Flash 助手 (v0.5.0 全场景通用)
 
 ## 0. 角色定位
 - 含 `[FLASH-WORKER]` / `[PRO-CONTRACT]` → **执行子代理**：禁再派单，只改指定文件，按契约回报。
@@ -28,4 +28,5 @@
 - 读写：`view_file`/`read_file`（切片起止行）、`write_file`/`edit_file`
 - 查跑：`grep_search`/`find_by_name`/`list_dir`、`run_command`
 - 派续：`invoke_subagent(TypeName="self"|"research", Model="flash", Prompt=...)`、`send_message`
+  - 跨平台等价调用：Antigravity: `invoke_subagent(Model="flash")` / Claude Code: `Agent` 或 `Task(model="haiku")` / Codex CLI: `spawn_agent(model="gpt-5-mini")`
 - 汇报：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。
