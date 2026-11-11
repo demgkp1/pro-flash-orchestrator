@@ -130,7 +130,7 @@ if (mode === 'spawn') {
 } else if (mode === 'claim') {
   const claims = [];
   for (let i = 0; i < count; i++) {
-    const res = checkAndClaimSubagent('worker-' + workerId + '-' + i);
+    const res = checkAndClaimSubagent('worker-' + workerId + '-' + i, 'parent-sp-' + workerId.split('-').pop());
     if (res && res.isSubAgent) claims.push(res);
   }
   process.stdout.write(JSON.stringify(claims));
@@ -211,9 +211,10 @@ if (mode === 'spawn') {
   assert.equal(pool.pendingCount, 3, `Expected pendingCount 3, got ${pool.pendingCount}`);
   assert.equal(pool.spawns.length, 3, `Expected spawns length 3, got ${pool.spawns.length}`);
 
-  const claim1 = checkAndClaimSubagent('child-worker-alpha');
-  const claim2 = checkAndClaimSubagent('child-worker-beta');
-  const claim3 = checkAndClaimSubagent('child-worker-gamma');
+  assert.equal(checkAndClaimSubagent('unrelated-main'), null, 'No identity claim without parent evidence');
+  const claim1 = checkAndClaimSubagent('child-worker-alpha', parentId);
+  const claim2 = checkAndClaimSubagent('child-worker-beta', parentId);
+  const claim3 = checkAndClaimSubagent('child-worker-gamma', parentId);
 
   assert.equal(claim1?.isSubAgent, true);
   assert.equal(claim1?.parent, parentId);
@@ -225,15 +226,15 @@ if (mode === 'spawn') {
   const poolAfter = JSON.parse(fs.readFileSync(SPAWN_FILE, 'utf8'));
   assert.equal(poolAfter.pendingCount, 0, 'All spawns should be claimed');
 
-  const claim1Again = checkAndClaimSubagent('child-worker-alpha');
+  const claim1Again = checkAndClaimSubagent('child-worker-alpha', parentId);
   assert.equal(claim1Again?.isSubAgent, true);
   assert.equal(claim1Again?.parent, parentId);
 
-  const claim4 = checkAndClaimSubagent('child-worker-delta');
+  const claim4 = checkAndClaimSubagent('child-worker-delta', parentId);
   assert.equal(claim4, null, '4th child should not claim any spawn');
 
   markSubagentSpawn('test-parent-conv-2');
-  const parentClaim = checkAndClaimSubagent('test-parent-conv-2');
+  const parentClaim = checkAndClaimSubagent('test-parent-conv-2', 'test-parent-conv-2');
   assert.equal(parentClaim, null, 'Parent cannot claim its own spawn');
   console.log('  PASS 并发派生池支持多子代理依次隔离认领，防冲撞、幂等与耗尽判定通过！');
 
@@ -246,6 +247,7 @@ if (mode === 'spawn') {
 
   const subPayloadWithToolCall = {
     conversationId: 'sub-worker-coldstart-toolcall',
+    parentConversationId: toolCallParentId,
     toolCall: {
       name: 'read_file',
       args: { Path: '/workspace/src/index.js', StartLine: 1, EndLine: 20 },

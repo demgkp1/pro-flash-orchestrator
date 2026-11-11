@@ -27,18 +27,22 @@ export const SPAWN_LOCK = path.join(STATE_DIR, 'last_spawn.lock');
 
 /**
  * Cross-platform spinlock using exclusive file creation ('wx').
- * If lock file is older than 3000ms, it is considered stale/deadlocked and cleaned up.
+ * Reap old locks only when their owner has exited. Never steal a live lock.
  */
+const ownedLocks = new Map();
+
 export function acquireLock(lockFile, timeoutMs = 2000) {
   const start = Date.now();
   const sleepBuffer = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() - start < timeoutMs) {
     try {
       const fd = fs.openSync(lockFile, 'wx');
+      const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
       try {
+        fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, token }));
+        ownedLocks.set(lockFile, token);
+      } finally {
         fs.closeSync(fd);
-      } catch {
-        /* ignore */
       }
       return true;
     } catch (err) {
@@ -46,6 +50,24 @@ export function acquireLock(lockFile, timeoutMs = 2000) {
         try {
           const st = fs.statSync(lockFile);
           if (Date.now() - st.mtimeMs > 3000) {
+            let liveOwner = false;
+            try {
+              const owner = JSON.parse(fs.readFileSync(lockFile, 'utf8'));
+              if (Number.isInteger(owner.pid) && owner.pid > 0) {
+                try {
+                  process.kill(owner.pid, 0);
+                  liveOwner = true;
+                } catch (error) {
+                  liveOwner = error.code !== 'ESRCH';
+                }
+              }
+            } catch {
+              /* Legacy/empty abandoned locks can still be reaped. */
+            }
+            if (liveOwner) {
+              Atomics.wait(sleepBuffer, 0, 0, 15);
+              continue;
+            }
             try {
               fs.unlinkSync(lockFile);
             } catch {
@@ -73,9 +95,14 @@ export function acquireLock(lockFile, timeoutMs = 2000) {
 
 export function releaseLock(lockFile) {
   try {
-    fs.unlinkSync(lockFile);
+    const token = ownedLocks.get(lockFile);
+    if (token && JSON.parse(fs.readFileSync(lockFile, 'utf8')).token === token) {
+      fs.unlinkSync(lockFile);
+    }
   } catch {
     /* ignore */
+  } finally {
+    ownedLocks.delete(lockFile);
   }
 }
 
@@ -127,6 +154,7 @@ export function markSubagentSpawn(parentConvId) {
   try {
     ensureStateDir();
     const locked = acquireLock(SPAWN_LOCK, 2000);
+    if (!locked) return false;
     try {
       const now = Date.now();
       let pool = { pendingCount: 0, spawns: [] };
@@ -152,6 +180,7 @@ export function markSubagentSpawn(parentConvId) {
       });
       pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
       safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
+      return true;
     } finally {
       if (locked) releaseLock(SPAWN_LOCK);
     }
@@ -160,11 +189,14 @@ export function markSubagentSpawn(parentConvId) {
   }
 }
 
-export function checkAndClaimSubagent(convId) {
+export function checkAndClaimSubagent(convId, verifiedParentId) {
   if (!convId || convId === 'unknown' || convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST)) return null;
+  // A recent spawn is not identity evidence: another main session may start too.
+  if (!verifiedParentId || verifiedParentId === convId) return null;
   try {
     ensureStateDir();
     const locked = acquireLock(SPAWN_LOCK, 2000);
+    if (!locked) return null;
     try {
       if (!fs.existsSync(SPAWN_FILE)) return null;
       const raw = fs.readFileSync(SPAWN_FILE, 'utf8');
@@ -175,13 +207,13 @@ export function checkAndClaimSubagent(convId) {
       pool.spawns = pool.spawns.filter((s) => now - Number(s.ts || 0) < 60000);
 
       // 1. check if already claimed by this convId
-      const existing = pool.spawns.find((s) => s.claimedBy === convId);
+      const existing = pool.spawns.find((s) => s.claimedBy === convId && s.parent === verifiedParentId);
       if (existing) {
         return { isSubAgent: true, parent: existing.parent };
       }
 
-      // 2. find first unclaimed spawn not spawned by convId
-      const unclaimed = pool.spawns.find((s) => !s.claimedBy && s.parent !== convId);
+      // Claim only a spawn belonging to the explicitly identified parent.
+      const unclaimed = pool.spawns.find((s) => !s.claimedBy && s.parent === verifiedParentId);
       if (unclaimed) {
         unclaimed.claimedBy = convId;
         pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
@@ -212,11 +244,10 @@ export function detectHarness(rawPayload) {
   const raw = rawPayload && typeof rawPayload === 'object' ? rawPayload : null;
   if (!raw) return 'antigravity';
   if (raw.hook_event_name || raw.session_id || raw.tool_name) {
-    if (
-      String(raw.model || '').match(/gpt|codex|o1|o3|o4/i) ||
-      'turn_id' in raw ||
-      Boolean(process.env.CODEX_HOME)
-    ) {
+    const model = String(raw.model || '');
+    if (/claude|^(?:haiku|sonnet|opus)\b/i.test(model)) return 'claude';
+    if (/gpt|codex|^o\d\b/i.test(model) || 'turn_id' in raw ||
+        /^(?:spawn_agent|exec_command|shell)$/.test(String(raw.tool_name || ''))) {
       return 'codex';
     }
     return 'claude';
@@ -247,10 +278,13 @@ function splitArgsCommand(cmd) {
   return String(cmd || '');
 }
 
-function extractApplyPatchPath(input) {
-  const text = String((input && (input.patch || input.input)) || '');
-  const match = text.match(/^\*\*\*\s+(?:Update|Add|Delete)\s+File:\s*(.+)$/m);
-  return match ? match[1].trim() : '';
+export function extractApplyPatchPaths(input) {
+  const text = typeof input === 'string' ? input : String((input && (input.patch || input.input)) || '');
+  const paths = [];
+  for (const match of text.matchAll(/^\*\*\* (?:Update File:|Add File:|Delete File:|Move to:) (.+)\r?$/gm)) {
+    paths.push(match[1].trim());
+  }
+  return [...new Set(paths)];
 }
 
 export function normalizeIncomingPayload(raw, harness = HARNESS) {
@@ -296,7 +330,9 @@ export function normalizeIncomingPayload(raw, harness = HARNESS) {
 
   if (!raw.toolCall && raw.tool_name) {
     const rawTool = String(raw.tool_name);
-    const input = raw.tool_input && typeof raw.tool_input === 'object' ? raw.tool_input : {};
+    const input = raw.tool_input && typeof raw.tool_input === 'object'
+      ? raw.tool_input
+      : rawTool === 'apply_patch' && typeof raw.tool_input === 'string' ? { input: raw.tool_input } : {};
 
     if (rawTool === 'Read' || rawTool === 'read_file' || rawTool === 'view_file') {
       const filePath = input.file_path || input.path || input.AbsolutePath || input.Path || input.FilePath || '';
@@ -322,13 +358,15 @@ export function normalizeIncomingPayload(raw, harness = HARNESS) {
       rawTool === 'write_file' ||
       rawTool === 'edit_file'
     ) {
+      const patchPaths = rawTool === 'apply_patch' ? extractApplyPatchPaths(input) : [];
+      if (rawTool === 'apply_patch') raw._patchPaths = patchPaths;
       const targetPath =
+        patchPaths[0] ||
         input.file_path ||
         input.path ||
         input.Path ||
         input.AbsolutePath ||
         input.TargetFile ||
-        (rawTool === 'apply_patch' ? extractApplyPatchPath(input) : '') ||
         '';
       raw.toolCall = {
         name: 'write_file',
@@ -500,63 +538,58 @@ export function isSubAgent(payload) {
     const convId = String((p && p.conversationId) || '');
     const isDoctor = convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST);
     const sess = convId && convId !== 'unknown' ? readSession(convId) : {};
-
-    if (!isDoctor && sess && sess.isSubAgent === true) return true;
-    if (p.parentConversationId) {
-      if (convId && convId !== 'unknown' && !isDoctor && HARNESS === 'antigravity') {
-        writeSession(convId, { ...sess, isSubAgent: true });
-      }
-      return true;
-    }
     const ctx = p.callerContext;
-    if (ctx && typeof ctx === 'object' && ctx.parentConversationId) {
+    const parent = p.parentConversationId || (ctx && typeof ctx === 'object' && ctx.parentConversationId);
+    const remember = (evidence, parentId = '') => {
+      if (sess.isSubAgent === true && sess.subagentEvidence === evidence &&
+          (!parentId || sess.parentConversationId === String(parentId))) return;
       if (convId && convId !== 'unknown' && !isDoctor && HARNESS === 'antigravity') {
-        writeSession(convId, { ...sess, isSubAgent: true });
+        updateSession(convId, (state) => {
+          state.isSubAgent = true;
+          state.subagentEvidence = evidence;
+          if (parentId) state.parentConversationId = String(parentId);
+        });
       }
+    };
+
+    if (parent) {
+      if (!isDoctor && HARNESS === 'antigravity' && !sess.subagentEvidence) checkAndClaimSubagent(convId, String(parent));
+      remember('parent', parent);
       return true;
     }
-    if (!isDoctor && sess && sess.isSubAgent === false) return false;
 
     const verdict = HARNESS === 'antigravity' ? transcriptVerdict(p.transcriptPath) : null;
     if (verdict === true) {
-      if (convId && convId !== 'unknown' && !isDoctor) {
-        writeSession(convId, { ...sess, isSubAgent: true });
-      }
+      remember('transcript');
       return true;
     }
     if (verdict === false) {
-      if (convId && convId !== 'unknown' && !isDoctor) {
+      if (convId && convId !== 'unknown' && !isDoctor && (sess.isSubAgent !== false || sess.subagentEvidence)) {
         updateSession(convId, (s) => {
           s.isSubAgent = false;
+          delete s.subagentEvidence;
+          delete s.parentConversationId;
         });
       }
       return false;
     }
 
-    if (!isDoctor && HARNESS === 'antigravity' && verdict === null) {
-      try {
-        const claim = checkAndClaimSubagent(convId);
-        if (claim && claim.isSubAgent) {
-          updateSession(convId, (s) => {
-            s.isSubAgent = true;
-            s.parentConversationId = claim.parent;
-          });
-          return true;
-        }
-      } catch {
-        /* ignore */
-      }
-    }
+    // Ignore legacy cached positives: they may have come from the global spawn
+    // heuristic. Newly cached roles carry their actual source of evidence.
+    if (!isDoctor && sess.isSubAgent === true && sess.subagentEvidence) return true;
 
     const input = String(p.lastUserInput || '');
     // Cold-start sub-agent: system message wrapper or prefixed/appended contract marker.
     if (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender='))) {
+      remember('contract');
       return true;
     }
     if (/^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input)) {
+      remember('contract');
       return true;
     }
     if (/\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input)) {
+      remember('contract');
       return true;
     }
     return false;
@@ -983,6 +1016,9 @@ export function updateSession(convId, mutatorFn) {
   const lockFile = sessionLockFile(convId);
   ensureStateDir();
   const locked = acquireLock(lockFile, 2000);
+  // Never run a mutator against an unlocked snapshot. Callers can retry a
+  // rejected update instead of silently overwriting another process's work.
+  if (!locked) return null;
   try {
     const current = readSession(convId);
     let updated = typeof mutatorFn === 'function' ? mutatorFn(current) : current;
@@ -993,7 +1029,7 @@ export function updateSession(convId, mutatorFn) {
     safeWriteFileSync(sessionFile(convId), JSON.stringify(finalData));
     return finalData;
   } catch {
-    return defaultSession();
+    return null;
   } finally {
     if (locked) {
       releaseLock(lockFile);

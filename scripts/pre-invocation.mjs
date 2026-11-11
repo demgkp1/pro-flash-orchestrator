@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v0.5.0) — turn-boundary wake-up + deduplicated drift detector.
+ * PreInvocation hook (v0.5.1) — turn-boundary wake-up + deduplicated drift detector.
  *
  * Key guarantees:
  *   1. Uses `globalStep` (transcript step_index / line count) and turn-reset
@@ -21,10 +21,9 @@ import {
   logDecision,
   output,
   readPayload,
-  readSession,
   readTail,
   setContext,
-  writeSession,
+  updateSession,
 } from './lib.mjs';
 
 const NAG_STEP_COOLDOWN = 4; // minimum transcript steps between two drift nudges
@@ -47,7 +46,6 @@ if (mode === 'off' || isSubAgent(payload)) {
   output({});
 } else {
   const steps = [];
-  const state = readSession(conversationId);
   const transcriptPath = String(payload.transcriptPath || '');
   const userInput = lastUserInput(payload).trim();
 
@@ -142,79 +140,89 @@ if (mode === 'off' || isSubAgent(payload)) {
     }
   }
 
-  /* ------------------------------------ 1. new user turn boundary wakeup */
-  const isNewUserTurn = Boolean(userInput && userInput !== state.lastUserInput);
-  if (isNewUserTurn) {
-    state.lastUserInput = userInput;
-    state.readsSinceDispatch = [];
-    state.writesSinceDispatch = [];
-  }
+  // Merge turn bookkeeping under the same lock as the file and spawn guards;
+  // saving a previously read whole-session snapshot would lose their updates.
+  const updated = updateSession(conversationId, (state) => {
+    /* ------------------------------------ 1. new user turn boundary wakeup */
+    const turnId = String(payload.turn_id || payload.turnId || '');
+    const isNewUserTurn = payload.hook_event_name === 'UserPromptSubmit' ||
+      Boolean(turnId && turnId !== state.lastUserTurnId) ||
+      Boolean(userInput && userInput !== state.lastUserInput) ||
+      Boolean(invocationNum > 0 && invocationNum < Number(state.lastInvocationNum || 0));
+    if (isNewUserTurn) {
+      state.lastUserInput = userInput;
+      state.lastUserTurnId = turnId;
+      state.userTurnSequence = Number(state.userTurnSequence || 0) + 1;
+      state.currentBatchSpawns = 0;
+      state.maxReadsAllowed = 3;
+      state.readsSinceDispatch = [];
+      state.writesSinceDispatch = [];
+    }
+    state.lastInvocationNum = invocationNum;
 
-  // Prefer deduplicated, exempt-filtered file lists from guard-read-file / guard-write-file
-  const distinctReads = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch.length : 0;
-  const stateWrites = Array.isArray(state.writesSinceDispatch)
-    ? state.writesSinceDispatch.length
-    : Number(state.writesSinceDispatch || 0);
-  const writes = Math.max(stateWrites, transcriptWrites);
-  const reads = distinctReads;
+    // Prefer deduplicated, exempt-filtered file lists from guard-read-file / guard-write-file
+    const distinctReads = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch.length : 0;
+    const stateWrites = Array.isArray(state.writesSinceDispatch)
+      ? state.writesSinceDispatch.length
+      : Number(state.writesSinceDispatch || 0);
+    const writes = Math.max(stateWrites, transcriptWrites);
+    const reads = distinctReads;
 
-  const lastNagStep = Number(state.lastNagStep ?? -999);
-  const stepDelta = globalStep >= lastNagStep ? globalStep - lastNagStep : NAG_STEP_COOLDOWN;
-  const invReset = invocationNum > 0 && invocationNum < Number(state.lastNagInvocation || 0);
-  const cooled = stepDelta >= NAG_STEP_COOLDOWN || invReset || isNewUserTurn;
+    const lastNagStep = Number(state.lastNagStep ?? -999);
+    const stepDelta = globalStep >= lastNagStep ? globalStep - lastNagStep : NAG_STEP_COOLDOWN;
+    const invReset = invocationNum > 0 && invocationNum < Number(state.lastNagInvocation || 0);
+    const cooled = stepDelta >= NAG_STEP_COOLDOWN || invReset || isNewUserTurn;
 
-  if (!isCurrentModelFlash && isNewUserTurn && globalStep >= WAKEUP_MIN_STEPS && writes < 3) {
-    state.lastNagStep = globalStep;
-    state.lastNagInvocation = invocationNum;
-    steps.push({
-      ephemeralMessage:
-        '[Pro-Flash 轮次唤醒] 凡需读≥3个文件请派 invoke_subagent(TypeName="research", Model="flash")；改≥2个文件或>50行请派 invoke_subagent(TypeName="self", Model="flash")。派单后静默等待通知。',
-    });
-  } else if (!isCurrentModelFlash && cooled && (writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
-    /* ---------------------------------------------------- 2. mid-turn drift */
-    state.lastNagStep = globalStep;
-    state.lastNagInvocation = invocationNum;
-    steps.push({
-      ephemeralMessage: `[Pro-Flash 漂移提醒] 已直读 ${reads} 个文件、改写 ${writes} 次文件。请立即派 invoke_subagent(TypeName="research"|"self", Model="flash") 协作，派单后静默等待通知。`,
-    });
-  }
+    if (!isCurrentModelFlash && isNewUserTurn && globalStep >= WAKEUP_MIN_STEPS && writes < 3) {
+      state.lastNagStep = globalStep;
+      state.lastNagInvocation = invocationNum;
+      steps.push({
+        ephemeralMessage:
+          '[Pro-Flash 轮次唤醒] 凡需读≥3个文件请派 invoke_subagent(TypeName="research", Model="flash")；改≥2个文件或>50行请派 invoke_subagent(TypeName="self", Model="flash")。派单后静默等待通知。',
+      });
+    } else if (!isCurrentModelFlash && cooled && (writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
+      /* ---------------------------------------------------- 2. mid-turn drift */
+      state.lastNagStep = globalStep;
+      state.lastNagInvocation = invocationNum;
+      steps.push({
+        ephemeralMessage: `[Pro-Flash 漂移提醒] 已直读 ${reads} 个文件、改写 ${writes} 次文件。请立即派 invoke_subagent(TypeName="research"|"self", Model="flash") 协作，派单后静默等待通知。`,
+      });
+    }
 
-  /* ----------------------------------------------------- 3. pressure check */
-  const lastWarnStep = Number(state.lastWarnStep ?? -999);
-  const warnCooled = globalStep < lastWarnStep || globalStep - lastWarnStep >= WARN_STEP_COOLDOWN;
-  if (transcriptBytes >= PRESSURE_BYTES && warnCooled) {
-    state.lastWarnStep = globalStep;
-    const mb = (transcriptBytes / (1024 * 1024)).toFixed(1);
-    steps.push({
-      systemMessage: {
-        systemMessage: '',
-        renderInfo: {
-          title: 'Pro-Flash 上下文预警',
-          titlePrefix: '提醒',
-          markdown: `⚠️ **上下文预警**：本会话转录已达 ${mb} MB，后续每轮都会重发这部分。建议在当前功能交付后执行 \`/compact\` 压缩上下文。`,
+    /* ----------------------------------------------------- 3. pressure check */
+    const lastWarnStep = Number(state.lastWarnStep ?? -999);
+    const warnCooled = globalStep < lastWarnStep || globalStep - lastWarnStep >= WARN_STEP_COOLDOWN;
+    if (transcriptBytes >= PRESSURE_BYTES && warnCooled) {
+      state.lastWarnStep = globalStep;
+      const mb = (transcriptBytes / (1024 * 1024)).toFixed(1);
+      steps.push({
+        systemMessage: {
+          systemMessage: '',
+          renderInfo: {
+            title: 'Pro-Flash 上下文预警',
+            titlePrefix: '提醒',
+            markdown: `⚠️ **上下文预警**：本会话转录已达 ${mb} MB，后续每轮都会重发这部分。建议在当前功能交付后执行 \`/compact\` 压缩上下文。`,
+          },
         },
-      },
-    });
-  }
+      });
+    }
 
-  if (isNewUserTurn || steps.length > 0) {
-    writeSession(conversationId, state);
-  }
+    if (steps.length > 0) {
+      logDecision({
+        hook: 'pre-invocation',
+        action: 'inject',
+        mode,
+        steps: steps.length,
+        globalStep,
+        reads,
+        writes,
+        isNewUserTurn,
+        transcriptMB: Number((transcriptBytes / (1024 * 1024)).toFixed(2)),
+        userInput: userInput.slice(0, 80),
+      });
+    }
+    return state;
+  });
 
-  if (steps.length > 0) {
-    logDecision({
-      hook: 'pre-invocation',
-      action: 'inject',
-      mode,
-      steps: steps.length,
-      globalStep,
-      reads,
-      writes,
-      isNewUserTurn,
-      transcriptMB: Number((transcriptBytes / (1024 * 1024)).toFixed(2)),
-      userInput: userInput.slice(0, 80),
-    });
-  }
-
-  output(steps.length > 0 && mode === 'enforce' ? { injectSteps: steps, terminationBehavior: '' } : {});
+  output(updated && steps.length > 0 && mode === 'enforce' ? { injectSteps: steps, terminationBehavior: '' } : {});
 }

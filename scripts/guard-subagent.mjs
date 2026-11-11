@@ -140,11 +140,12 @@ function decide() {
       let denyReason = '';
 
       if (!isDoctor) {
-        updateSession(convId, (state) => {
+        const updated = updateSession(convId, (state) => {
           const now = Date.now();
-          const hasReads = Array.isArray(state.readsSinceDispatch) && state.readsSinceDispatch.length > 0;
-          const hasWrites = Array.isArray(state.writesSinceDispatch) && state.writesSinceDispatch.length > 0;
-          const isNewBatch = (now - Number(state.lastSpawnAt || 0) > 30000) || hasReads || hasWrites;
+          const userInput = lastUserInput(payload).trim();
+          const turnKey = String(payload.turn_id || payload.turnId || state.userTurnSequence || '');
+          const isNewBatch = state.spawnTurnKey !== turnKey ||
+            (userInput && state.lastSpawnUserInput !== userInput);
 
           let batchCount = isNewBatch ? 0 : Number(state.currentBatchSpawns || 0);
 
@@ -157,12 +158,20 @@ function decide() {
 
           batchCount += 1;
           state.currentBatchSpawns = batchCount;
+          state.spawnTurnKey = turnKey;
+          if (userInput) state.lastSpawnUserInput = userInput;
           state.lastSpawnAt = now;
           state.readsSinceDispatch = [];
           state.writesSinceDispatch = [];
           state.maxReadsAllowed = Math.min(10, Math.max(3, batchCount * 2));
           return state;
         });
+
+        if (!updated) {
+          const reason = '【状态锁忙】派单配额暂时无法安全更新，请稍后重试本次工具调用。';
+          logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, reason });
+          return mode === 'enforce' ? { decision: 'deny', reason } : ALLOW;
+        }
 
         if (quotaDeny) {
           logDecision({ hook: 'guard-subagent', tool, action: mode === 'enforce' ? 'deny' : 'would-deny', mode, reason: denyReason });

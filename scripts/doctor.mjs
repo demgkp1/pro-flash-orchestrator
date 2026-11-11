@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Pro-Flash Orchestrator v0.5.0 — doctor
+ * Pro-Flash Orchestrator v0.5.1 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -93,7 +93,7 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v0.5.0 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.5.1 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('hooks.json 可解析，且引用的脚本都存在', () => {
@@ -1072,7 +1072,7 @@ check('跨平台协议：Claude Code Agent (subagent_type: Explore) 映射研究
   assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
 });
 
-check('跨平台协议：Codex CLI Bash 读取 mode.json 拦截', () => {
+check('跨平台协议：Codex CLI Bash 只读 mode.json 放行', () => {
   const payload = {
     hook_event_name: 'PreToolUse',
     session_id: 'codex-bash-session',
@@ -1082,11 +1082,7 @@ check('跨平台协议：Codex CLI Bash 读取 mode.json 拦截', () => {
     tool_input: { command: 'cat .state/mode.json' },
   };
   const out = runHook('guard-command.mjs', payload);
-  assert(out.hookSpecificOutput, `expected hookSpecificOutput, got ${JSON.stringify(out)}`);
-  assert(out.hookSpecificOutput.permissionDecision === 'deny', `expected deny, got ${out.hookSpecificOutput.permissionDecision}`);
-  assert(typeof out.hookSpecificOutput.permissionDecisionReason === 'string' && out.hookSpecificOutput.permissionDecisionReason.length > 0, 'expected permissionDecisionReason');
-  assert(out.suppressOutput === undefined, 'top-level should not contain suppressOutput');
-  assert(out.hookSpecificOutput.suppressOutput === undefined, 'hookSpecificOutput should not contain suppressOutput');
+  assert(Object.keys(out).length === 0, `expected pass for read-only mode.json, got ${JSON.stringify(out)}`);
 });
 
 check('跨平台协议：Codex CLI SessionStart 与 spawn_agent 重写', () => {

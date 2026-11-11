@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { runtimeEntries, readProjectFile, renderInstallReadme } from './runtime-files.mjs';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.dirname(SCRIPTS_DIR);
@@ -23,6 +24,7 @@ function parseArgs(argv) {
     outDir: path.join(ROOT_DIR, 'dist'),
     outFile: '',
     worktree: false,
+    runtime: false,
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -36,6 +38,10 @@ function parseArgs(argv) {
       opts.outFile = path.resolve(String(argv[++i] || ''));
     } else if (arg === '--worktree') {
       opts.worktree = true;
+    } else if (arg === '--runtime') {
+      opts.runtime = true;
+    } else if (arg === '--source') {
+      opts.runtime = false;
     }
   }
   return opts;
@@ -96,7 +102,7 @@ export function listZipEntries(zipPath) {
   return entries;
 }
 
-export function verifyZipLayout(zipPath) {
+export function verifyZipLayout(zipPath, allowedFiles = null) {
   const entries = listZipEntries(zipPath);
   if (entries.length === 0) {
     throw new Error(`Archive is empty: ${zipPath}`);
@@ -114,14 +120,23 @@ export function verifyZipLayout(zipPath) {
       throw new Error(`Missing required file in archive: ${required}`);
     }
   }
+  if (allowedFiles) {
+    const allowed = new Set(allowedFiles.map((file) => `${PREFIX}${file}`));
+    for (const entry of entries) {
+      if (!entry.endsWith('/') && !allowed.has(entry)) throw new Error(`Non-runtime file in archive: ${entry}`);
+    }
+    for (const file of allowed) {
+      if (!entries.includes(file)) throw new Error(`Missing runtime file in archive: ${file}`);
+    }
+  }
   return entries;
 }
 
-function packageFromWorktree(outFile) {
+function packageFromWorktree(outFile, runtimeOptions = null) {
   const rawList = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
     cwd: ROOT_DIR,
   });
-  const relFiles = rawList
+  const relFiles = runtimeOptions ? runtimeEntries(runtimeOptions) : rawList
     .toString('utf8')
     .split('\0')
     .filter((f) => f && !f.startsWith('.git/') && !f.startsWith('.state/') && !f.startsWith('dist/') && !f.endsWith('.zip'));
@@ -129,12 +144,17 @@ function packageFromWorktree(outFile) {
   const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-pkg-'));
   const stageDir = path.join(stageRoot, 'pro-flash-orchestrator');
   try {
-    for (const rel of relFiles) {
+    for (const file of relFiles) {
+      const rel = runtimeOptions ? file.from : file;
       const src = path.join(ROOT_DIR, rel);
-      if (!fs.existsSync(src) || !fs.statSync(src).isFile()) continue;
-      const dst = path.join(stageDir, rel);
+      if (!runtimeOptions && (!fs.existsSync(src) || !fs.statSync(src).isFile())) continue;
+      const dst = path.join(stageDir, runtimeOptions ? file.to : rel);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      fs.copyFileSync(src, dst);
+      if (runtimeOptions) {
+        let content = readProjectFile(rel, runtimeOptions);
+        if (rel === 'docs/INSTALL.md') content = renderInstallReadme(content);
+        fs.writeFileSync(dst, content);
+      } else fs.copyFileSync(src, dst);
     }
     if (process.platform === 'win32') {
       const esc = (s) => s.replace(/'/g, "''");
@@ -150,7 +170,7 @@ function packageFromWorktree(outFile) {
         '  }',
         '} finally { $zip.Dispose() }',
       ].join('; ');
-      execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: 'inherit' });
+      execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: 'inherit', windowsHide: true });
     } else {
       execFileSync('zip', ['-rq', outFile, 'pro-flash-orchestrator'], {
         cwd: stageRoot,
@@ -158,6 +178,8 @@ function packageFromWorktree(outFile) {
       });
     }
   } finally {
+    if (path.dirname(path.resolve(stageRoot)) !== path.resolve(os.tmpdir()) ||
+        !path.basename(stageRoot).startsWith('pfo-pkg-')) throw new Error('Invalid package cleanup path');
     fs.rmSync(stageRoot, { recursive: true, force: true });
   }
 }
@@ -168,7 +190,9 @@ export function createReleaseZip(opts) {
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
 
-  if (opts.worktree) {
+  if (opts.runtime) {
+    packageFromWorktree(outFile, { worktree: Boolean(opts.worktree), ref: opts.ref || 'HEAD' });
+  } else if (opts.worktree) {
     packageFromWorktree(outFile);
   } else {
     execFileSync(
@@ -178,7 +202,8 @@ export function createReleaseZip(opts) {
     );
   }
 
-  const entries = verifyZipLayout(outFile);
+  const allowed = opts.runtime ? runtimeEntries({ worktree: Boolean(opts.worktree), ref: opts.ref || 'HEAD' }).map((file) => file.to) : null;
+  const entries = verifyZipLayout(outFile, allowed);
   return { tag, outFile, entryCount: entries.length };
 }
 

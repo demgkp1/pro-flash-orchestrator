@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (optional, e.g. v0.5.0)'
+        description: 'Release tag (optional, e.g. v0.5.1)'
         required: false
         default: ''
         type: string
@@ -34,13 +34,17 @@ jobs:
         run: |
           node scripts/doctor.mjs
           node scripts/test-concurrency.mjs
+          node scripts/test-regressions.mjs
+          node scripts/test-install.mjs
 
       - name: Package release archive
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
         run: |
-          if [ -n "${{ inputs.tag }}" ]; then
-            node scripts/package.mjs --out-dir dist --tag "${{ inputs.tag }}"
+          if [ -n "$RELEASE_TAG" ]; then
+            node scripts/package.mjs --runtime --out-dir dist --tag "$RELEASE_TAG"
           else
-            node scripts/package.mjs --out-dir dist
+            node scripts/package.mjs --runtime --out-dir dist
           fi
 
       - name: Verify archive layout
@@ -59,4 +63,14 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 && gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber || gh release create "$GITHUB_REF_NAME" dist/*.zip --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --generate-notes
+          NOTES_FILE="docs/releases/$GITHUB_REF_NAME.md"
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.zip --clobber
+            if [ -f "$NOTES_FILE" ]; then
+              gh release edit "$GITHUB_REF_NAME" --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --notes-file "$NOTES_FILE"
+            fi
+          elif [ -f "$NOTES_FILE" ]; then
+            gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --generate-notes
+          fi

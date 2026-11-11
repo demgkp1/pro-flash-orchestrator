@@ -76,7 +76,7 @@ export function runCli(args = process.argv) {
 
   if (rows.length === 0) {
     console.log('  没有任何真实决策记录。');
-    console.log('  可能是：还没在新会话里用过插件，或 Hook 未生效（先跑 node scripts/doctor.mjs）。\n');
+    console.log('  可能是：还没在新会话里用过插件，或 Hook 未生效（请在维护工程运行 node scripts/doctor.mjs）。\n');
     return;
   }
 
@@ -130,7 +130,7 @@ export function runCli(args = process.argv) {
   const shadow = rows.filter((r) => r.mode === 'shadow').length;
   if (shadow > 0) console.log(`其中 shadow 模式（只记录未生效）：${shadow} 条`);
 
-  console.log('\n提示：阈值在 scripts/guard-read-file.mjs 顶部；改完跑 node scripts/doctor.mjs。\n');
+  console.log('\n提示：在维护工程调整 scripts/guard-read-file.mjs 阈值并运行自检，再部署到安装目录。\n');
 }
 
 const isDirectRun = Boolean(process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url));

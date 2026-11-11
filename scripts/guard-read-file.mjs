@@ -197,7 +197,7 @@ function decide() {
     let currentReads = [];
     let quotaLimit = 3;
 
-    updateSession(convId, (state) => {
+    const updated = updateSession(convId, (state) => {
       if (uInput && uInput !== state.lastReadUserInput) {
         state.lastReadUserInput = uInput;
         state.readsSinceDispatch = [];
@@ -216,6 +216,8 @@ function decide() {
       }
       return state;
     });
+
+    if (!updated) return finish({ deny: true, reason: '【状态锁忙】读取配额暂时无法安全更新，请稍后重试本次工具调用。' });
 
     if (shouldDenyQuota) {
       return finish({

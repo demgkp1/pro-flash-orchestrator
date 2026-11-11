@@ -49,11 +49,11 @@ function decide() {
   if (!WRITE_TOOLS.has(tool)) return ALLOW;
 
   const args = getArgs(payload);
-  const rawPath = pickPath(args);
-  if (!rawPath) return ALLOW;
-
-  const file = resolvePath(rawPath, payload);
-  if (!file) return ALLOW;
+  const rawPaths = payload._rawToolName === 'apply_patch' && Array.isArray(payload._patchPaths)
+    ? payload._patchPaths : [pickPath(args)];
+  const files = [...new Set(rawPaths.map((raw) => resolvePath(raw, payload)).filter(Boolean))];
+  if (files.length === 0) return ALLOW;
+  const file = files[0];
 
   const sub = isSubAgent(payload);
   const base = basenameOf(file);
@@ -65,6 +65,7 @@ function decide() {
     sub,
     base,
     path: file.length > 180 ? `…${file.slice(-179)}` : file,
+    ...(files.length > 1 ? { paths: files } : {}),
   };
 
   const finish = ({ deny = false, reason = '' } = {}) => {
@@ -80,9 +81,10 @@ function decide() {
   /* S1: mode.json is protected by security policy; no agent may modify it */
   try {
     const normState = path.resolve(STATE_DIR);
-    const normFile = path.resolve(file);
-    const rel = path.relative(normState, normFile);
-    if (!rel.startsWith('..') && !path.isAbsolute(rel) && base === 'mode.json') {
+    if (files.some((target) => {
+      const rel = path.relative(normState, path.resolve(target));
+      return !rel.startsWith('..') && !path.isAbsolute(rel) && basenameOf(target) === 'mode.json';
+    })) {
       return finish({
         deny: true,
         reason: '【安全拦截】禁止通过工具修改 mode.json。运行模式为用户安全配置，只能由用户在 .state/mode.json 手动配置。',
@@ -93,7 +95,8 @@ function decide() {
   }
 
   /* sub-agents and exempt paths are never policed ----------------------- */
-  if (sub || isExemptPath(file, payload)) return finish();
+  const guardedFiles = files.filter((target) => !isExemptPath(target, payload));
+  if (sub || guardedFiles.length === 0) return finish();
   if (
     mentions(payload, '[ALLOW-WRITE]') ||
     mentions(payload, '[FORCE-PRO]') ||
@@ -104,11 +107,12 @@ function decide() {
 
   const convId = String(payload.conversationId || 'unknown');
   const uInput = lastUserInput(payload).trim();
-  const normFile = process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
+  const normFiles = guardedFiles.map((target) => process.platform === 'win32'
+    ? path.normalize(target).toLowerCase() : path.normalize(target));
   let shouldDeny = false;
   let currentList = [];
 
-  updateSession(convId, (state) => {
+  const updated = updateSession(convId, (state) => {
     if (uInput && uInput !== state.lastWriteUserInput) {
       state.lastWriteUserInput = uInput;
       state.writesSinceDispatch = [];
@@ -117,21 +121,21 @@ function decide() {
     const writeList = Array.isArray(state.writesSinceDispatch) ? state.writesSinceDispatch : [];
     currentList = writeList;
 
-    if (!writeList.includes(normFile)) {
-      if (writeList.length >= 2) {
-        shouldDeny = true;
-        return;
-      }
-      writeList.push(normFile);
-      state.writesSinceDispatch = writeList;
+    const nextList = [...new Set([...writeList, ...normFiles])];
+    if (nextList.length > 2) {
+      shouldDeny = true;
+      return;
     }
+    state.writesSinceDispatch = nextList;
   });
+
+  if (!updated) return finish({ deny: true, reason: '【状态锁忙】写入配额暂时无法安全更新，请稍后重试本次工具调用。' });
 
   if (shouldDeny) {
     return finish({
       deny: true,
       reason:
-        '【写入守门：多文件连续直改拦截】自上次派单以来你已直接修改 2 个不同文件（' +
+        '【写入守门：多文件连续直改拦截】本次操作将超过 2 个不同文件的直改上限。此前修改的文件（' +
         currentList.map((p) => path.basename(p)).join(', ') +
         '）。按三明治协同红线，主控仅负责落盘 1~2 个核心标杆文件，其余外围文件修改必须同轮外派 invoke_subagent(TypeName="self", Model="flash") 或用 send_message 续派现有子代理（若确需主控直改可在输入中加 [ALLOW-WRITE]）。',
     });

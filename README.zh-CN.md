@@ -5,7 +5,7 @@
 面向一切日常编程、代码审查、Bug 排查、重构与文档研读。由 Pro 模型负责核心决策与标杆实现；所有助手子代理统一使用 Flash 模型负责外围工程扩写、测试用例编写与文档检索（取消 flash_lite）。所有分流策略均下沉至底层生命周期 Hook 进行物理拦截，杜绝上下文膨胀与配额损耗。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.5.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.5.1-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%202.0-lightgrey.svg)](#)
 [![Tests](https://img.shields.io/badge/Tests-90%20Passed-green.svg)](#)
 
@@ -76,7 +76,7 @@
 | **角色与契约初始化** | `SessionStart` | 会话启动时单次注入全场景分工规则；状态卡片通过 `renderInfo` 投递至 UI 渲染层。子代理启动自动跳过角色注入。 | 状态卡片对大模型零 Token 消耗，不侵占上下文。 |
 | **子代理统一降级** | `PreToolUse` (`invoke_subagent`) | 所有助手子代理统一使用 `flash`（`research` 探路调研与 `self` 工程实现均统一定向为 `flash`，取消 flash_lite）；仅显式携带 `[FORCE-PRO]` 时保留旗舰模型。 | 统一模型规格，平衡调研推理质量与 Token 成本，杜绝高级配额浪费。 |
 | **写入守门与标杆约束** | `PreToolUse` (`write_file`, `edit_file` 等) | 主模型直接修改源码文件限制在 1~2 个核心/标杆文件内；维护 `writesSinceDispatch`，试图修改第 3 个不同源码文件硬拦截（`deny`）并引导外派 Flash，子代理与 Artifact/生态路径自动豁免。 | 杜绝 Pro 亲自大包大揽机械工程，物理倒逼同轮并发外派助手扩写。 |
-| **冷启动、递归与轮询拦截** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **冷启动派生时间窗**：派单时写入 `last_spawn.json` 记录时间戳与父会话 ID，结合转录首行特征杜绝冷启动误判；<br>2. **递归阻断**：严格拦截子代理套娃派单（`deny`）；<br>3. **轮询拦截**：拦截主模型调用 `manage_subagents(Action="list")` 轮询子代理状态，消除等待期间无效 Token 消耗与异步抢改，引导直接结束回合静默等待系统唤醒（`Action="kill"` 放行）。 | 消除多层死循环、抢跑改写与轮询上下文浪费，保证异步协同秩序。 |
+| **冷启动、递归与轮询拦截** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **身份须有证据**：依据父会话元数据、子代理转录或冷启动契约标记识别身份；最近派单记录不能单独作为身份依据，认领必须匹配明确的父会话；<br>2. **递归阻断**：严格拦截子代理套娃派单（`deny`）；<br>3. **轮询拦截**：拦截主模型调用 `manage_subagents(Action="list")` 轮询子代理状态，消除等待期间无效 Token 消耗与异步抢改，引导直接结束回合静默等待系统唤醒（`Action="kill"` 放行）。 | 消除多层死循环、抢跑改写与轮询上下文浪费，保证异步协同秩序。 |
 | **中立契约与自定义守门** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 派单、自定义代理定义（`define_subagent`）及消息追加自动注入 `[FLASH-WORKER]` 与契约：工程子代理必须返回四列表格+自检命令与结果，`research` 调研子代理直接输出结构化摘要无需写文件。`artifactDirectoryPath` 丢失时安全回退至绝对路径 `~/.gemini/antigravity/brain/<convId>`。 | 消除大段源码回贴与只读沙箱写文件异常，防止工作区根目录污染。 |
 | **切片防泄洪与多文件连读拦截** | `PreToolUse` (`read_file`, `view_file`) | 1. **智能切片**：未显式切片读取代码文件（300-800行）自动收窄至 [1, 150] 行，>800 行代码或 >400 行文档/日志直接拦截引导派单；<br>2. **防泄洪增强**：文件 >40KB 且平均行长 >4KB（Minified 压缩代码/数据）一律物理拦截；<br>3. **多文件切片连读拦截**：维护 `readsSinceDispatch`，主模型试图切片连读第 4 个不同源码/文档文件触发硬拦截（`deny`），强制改派 `research (flash)`。自动豁免依赖库与 Artifact 目录。 | 消除单行压缩数据穿透与超大文件撑爆上下文的隐患，彻底阻断主模型以切片形式逐个连读多文件探路。 |
 | **命令防倾倒增强** | `PreToolUse` (`run_command`) | 递归解包多层嵌套 Shell；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。**全模式防倾倒**：覆盖变量赋值（`$content = Get-Content`）、子表达式（`Resolve-Path`）及 .NET 静态方法（`[IO.File]::ReadAllText`）。放行真实文件重定向输出（`>`、`>>`、`| Set-Content`、`> /dev/null`）。 | 杜绝终端海量日志倾倒至对话中，封堵全部管道与代码逃逸手段，同时不影响离线写盘。 |
@@ -84,42 +84,50 @@
 
 ---
 
-## 快速安装
+## 快速安装与维护目录分离
 
-推荐使用单行命令直接克隆至 Antigravity 插件目录：
+维护工程包含 Git、测试和发布工具；Antigravity 安装目录只接收运行文件。
 
 ### Windows (PowerShell)
+
+维护目录已经存在时跳过克隆：
+
 ```powershell
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git "$HOME\.gemini\config\plugins\pro-flash-orchestrator"
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git "E:\Edoc\Projects\pro-flash-orchestrator"
+cd "E:\Edoc\Projects\pro-flash-orchestrator"
+node scripts/install.mjs
 ```
 
-### macOS / Linux (bash / zsh)
+### macOS / Linux
+
 ```bash
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/.gemini/config/plugins/pro-flash-orchestrator
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/Projects/pro-flash-orchestrator
+cd ~/Projects/pro-flash-orchestrator
+node scripts/install.mjs
 ```
 
-### 插件升级
-进入插件所在目录执行拉取即可：
-```bash
-cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
+默认安装到用户目录 `.gemini/config/plugins/pro-flash-orchestrator`。可用 `--target <安装目录>` 指定路径，用 `--dry-run` 检查将复制的文件；部署保留 `.state/`，不复制维护工程的 Git、测试或 CI 文件。
+
+### 更新与打包
+
+在维护工程拉取或修改代码，完成四套自检后重新部署：
+
+```powershell
+git pull
+node scripts/doctor.mjs
+node scripts/test-concurrency.mjs
+node scripts/test-regressions.mjs
+node scripts/test-install.mjs
+node scripts/install.mjs
 ```
 
-<details>
-<summary>开发者模式（从自定义代码仓库软链接安装）</summary>
+发布运行包（包含跨平台 Hook 适配模板）：
 
-若需在个人代码工作区（如 `~/projects/pro-flash-orchestrator`）内对插件进行二次开发：
+```powershell
+node scripts/package.mjs --runtime --worktree
+```
 
-- Windows PowerShell (以管理员运行或已启用开发者模式):
-  ```powershell
-  cd <工作区目录>
-  New-Item -ItemType Junction -Path "$env:USERPROFILE\.gemini\config\plugins\pro-flash-orchestrator" -Target (Get-Location)
-  ```
-- macOS / Linux：
-  ```bash
-  cd <工作区目录>
-  ln -s "$(pwd)" "$HOME/.gemini/config/plugins/pro-flash-orchestrator"
-  ```
-</details>
+完整源码包使用 `--source --worktree`。`runtime-files.json` 是安装与运行包的统一文件白名单；`docs/INSTALL.md` 生成安装目录内的简要说明。已有 Git 安装目录必须先将完整维护工程迁出，再部署运行文件。
 
 ---
 
@@ -155,6 +163,7 @@ cd ~/.gemini/config/plugins/pro-flash-orchestrator && git pull
    { "mode": "shadow" }
    ```
    > **安全说明 (S1)**：`.state/mode.json` 属于用户安全配置，只能由人类用户手动编辑修改，受守门机制严格保护，严禁任何 AI 代理通过工具修改或覆盖。
+   允许 `Get-Content`、`cat` 等只读查询。批量补丁会检查全部受影响路径（包含重命名目标），再统一校验写入配额。
 2. 环境变量（修改后需重启 Antigravity 生效）：
    - Windows PowerShell: `$env:PRO_MODE="shadow"`
    - macOS / Linux: `export PRO_MODE=shadow`
@@ -173,6 +182,13 @@ node scripts/doctor.mjs
 ```bash
 node scripts/test-concurrency.mjs
 ```
+
+运行漏洞回归套件，覆盖身份隔离、批量补丁、锁竞争、轮次配额、命令守门与平台识别：
+```bash
+node scripts/test-regressions.mjs
+```
+
+锁竞争时会临时拒绝本次配额更新，可在锁释放后重试工具调用。五个子代理的配额只在新用户轮次重置，读写文件或等待不会重置；轮次 ID 与 `UserPromptSubmit` 事件可区分相同提示词，缺少这些信号的宿主依赖用户输入变化或调用计数回退识别边界。
 
 ### 2. 生产决策复盘
 查看最近 7 天在真实会话中触发的守门数据（自动剔除测试生成的数据）：
@@ -200,6 +216,8 @@ pro-flash-orchestrator/
 ├── .github/
 │   └── workflows/
 │       └── release.yml         # GitHub Actions 自动化发布与打包流水线
+├── runtime-files.json          # Runtime distribution manifest
+├── docs/INSTALL.md             # Installed README template
 ├── plugin.json                 # Antigravity 插件配置清单
 ├── hooks.json                  # 生命周期钩子路由定义
 ├── hooks/
@@ -224,6 +242,10 @@ pro-flash-orchestrator/
 │   ├── guard-command.mjs       # 命令守门（多层解包、重定向放行、倾倒拦截）
 │   ├── doctor.mjs              # 90 项全量自检测试套件
 │   ├── test-concurrency.mjs    # 多进程并发压测与守门集成测试套件
+│   ├── test-regressions.mjs    # 已审计漏洞及边界场景的回归测试
+│   ├── install.mjs             # Runtime-only deployment from the maintenance checkout
+│   ├── runtime-files.mjs       # Shared runtime allowlist loader
+│   ├── test-install.mjs        # Runtime boundary and state preservation tests
 │   ├── package.mjs             # 多平台打包与发布分发脚本
 │   └── report.mjs              # 生产决策聚合与统计复盘
 └── assets/

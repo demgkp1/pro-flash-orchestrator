@@ -24,7 +24,6 @@ import fs from 'node:fs';
 const DUMP_BYTES = 400 * 1024;
 const UNBOUNDED_READERS = /(?:^|[;&|]\s*|\$\w+\s*=\s*|\(\s*)(cat|type|Get-Content|gc|more|less)\b/i;
 const DOTNET_READERS = /\[(?:System\.)?IO\.File\]::(ReadAllText|ReadAllLines|ReadAllBytes|ReadLines)\s*\(\s*(\([^\)]+\)|"[^"]+"|'[^']+'|[^,)\s]+)/i;
-const BOUNDED_TAIL = /\|\s*(head|tail)\b|\|\s*Select-Object\s+-(?:First|Last)\b|\|\s*Out-String\s+-Stream|\|\s*more\b/i;
 const BOUNDED_FLAG = /(^|\s)-(TotalCount|Tail|First|Last|Head)\b/i;
 const SAFE_SINK_PIPE = /\|\s*(?:Set-Content|Add-Content|sc|ac|Out-File|Out-Null)\b/i;
 const REDIRECT_TARGET = /(?<!2)(?:1?>>|1?>|&>)\s*(?!&[12]\b)(?:["'][^"']+["']|\$null\b|\/dev\/null\b|NUL\b|[^\s|;&<>]+)/i;
@@ -157,20 +156,118 @@ function cleanSubExpression(raw) {
   return s;
 }
 
-function extractDumpTarget(command) {
+// Keep quoted paths and Resolve-Path expressions intact, while separating
+// lists/pipes/redirections. This is lexical inspection, not shell evaluation.
+function commandTokens(command) {
+  const tokens = [];
+  let token = '';
+  let quote = '';
+  let depth = 0;
+  let escaped = false;
+  const flush = () => { if (token) tokens.push(token); token = ''; };
+  for (let i = 0; i < command.length; i += 1) {
+    const ch = command[i];
+    if (escaped) { token += ch; escaped = false; continue; }
+    if (ch === '`' && quote !== "'") { token += ch; escaped = true; continue; }
+    if (quote) {
+      token += ch;
+      if (ch === quote) quote = '';
+      continue;
+    }
+    if (ch === '"' || ch === "'") { token += ch; quote = ch; continue; }
+    if (ch === '(') depth += 1;
+    if (ch === ')') depth = Math.max(0, depth - 1);
+    if (depth === 0 && /\s/.test(ch)) { flush(); continue; }
+    if (depth === 0 && /[,|<>;]/.test(ch)) {
+      flush();
+      if ((ch === '>' || ch === '<') && command[i + 1] === ch) {
+        tokens.push(ch + ch); i += 1;
+      } else tokens.push(ch);
+      continue;
+    }
+    token += ch;
+  }
+  flush();
+  return tokens;
+}
+
+function isBoundedPipeline(command) {
+  const tokens = commandTokens(command);
+  for (let i = 0; i < tokens.length; i += 1) {
+    if (tokens[i] !== '|') continue;
+    const name = String(tokens[i + 1] || '').toLowerCase();
+    const end = tokens.indexOf('|', i + 1);
+    const args = tokens.slice(i + 2, end < 0 ? tokens.length : end);
+    if (name === 'select-object') {
+      if (args.some((arg, j) => /^-(First|Last)$/i.test(arg) && /^\d+$/.test(args[j + 1] || ''))) return true;
+    } else if (name === 'head' || name === 'tail') {
+      if (args.some((arg) => /^(?:-.*f.*|--follow(?:=.*)?)$/.test(arg))) continue;
+      const count = args.findIndex((arg) => /^(?:-[nc]|--lines|--bytes)$/.test(arg));
+      if (count >= 0) {
+        if (/^\d+$/.test(args[count + 1] || '')) return true;
+      } else if (args.length === 0 || args.every((arg) => /^(?:-\d+|-[nc]\d+|--(?:lines|bytes)=\d+)$/.test(arg))) return true;
+    }
+  }
+  return false;
+}
+
+function isReadOnlyModePipeline(command) {
+  // Unknown programs and executable substitutions remain blocked. Only
+  // recognisable read operations may mention the protected configuration.
+  if (/\$\(|`/.test(command)) return false;
+  const tokens = commandTokens(command);
+  const readCommands = new Set([
+    'cat', 'type', 'get-content', 'gc', 'head', 'tail', 'more', 'less', 'rg', 'grep',
+    'select-string', 'get-item', 'test-path', 'get-childitem', 'ls', 'stat', 'file',
+    'select-object', 'sort-object', 'measure-object', 'out-string', 'out-null',
+    'write-output', 'echo', 'printf',
+  ]);
+  const sinks = new Set(['set-content', 'add-content', 'out-file', 'sc', 'ac', 'tee']);
+  let expectCommand = true;
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (token === '>' || token === '>>') {
+      const target = unquote(tokens[++i] || '');
+      if (!target || /\bmode\.json\b/i.test(target) || /[()]/.test(target) ||
+          (target.includes('$') && target !== '$null')) return false;
+      continue;
+    }
+    if (token === '<' || token === '<<' || token === ';') return false;
+    if (token === '|') { expectCommand = true; continue; }
+    if (expectCommand) {
+      const name = token.toLowerCase();
+      if (name === 'git' && /^(?:diff|show|log|status)$/.test(tokens[i + 1] || '')) {
+        expectCommand = false;
+        continue;
+      }
+      if (sinks.has(name)) {
+        const end = tokens.indexOf('|', i + 1);
+        const args = tokens.slice(i + 1, end < 0 ? tokens.length : end);
+        if (args.some((arg) => /\bmode\.json\b/i.test(arg) || arg.includes('$'))) return false;
+      } else if (!readCommands.has(name)) return false;
+      expectCommand = false;
+    } else if (token.startsWith('{') || token.startsWith('&') ||
+               (token.startsWith('(') && !/^\(\s*(?:Resolve-Path|Convert-Path|Get-Item|gi)\b/i.test(token))) {
+      return false;
+    }
+  }
+  return !expectCommand;
+}
+
+function extractDumpTargets(command) {
   const dotnetMatch = command.match(DOTNET_READERS);
   if (dotnetMatch) {
     const rest = command.slice(dotnetMatch.index + dotnetMatch[0].length);
     const stmtMatch = rest.match(/^(?:(?![;&]|&&|\|\|)[\s\S])*/);
     const readerStmt = stmtMatch ? stmtMatch[0] : rest;
     if (SAFE_SINK_PIPE.test(readerStmt) || REDIRECT_TARGET.test(readerStmt)) {
-      return null;
+      return [];
     }
-    return { reader: `[IO.File]::${dotnetMatch[1]}`, rawPath: cleanSubExpression(dotnetMatch[2]) };
+    return [{ reader: `[IO.File]::${dotnetMatch[1]}`, rawPath: cleanSubExpression(dotnetMatch[2]) }];
   }
 
   const match = command.match(UNBOUNDED_READERS);
-  if (!match) return null;
+  if (!match) return [];
   const reader = match[1];
   const rest = command.slice(match.index + match[0].length);
 
@@ -178,37 +275,24 @@ function extractDumpTarget(command) {
   const stmtMatch = rest.match(/^(?:(?![;&]|&&|\|\|)[\s\S])*/);
   const readerStmt = stmtMatch ? stmtMatch[0] : rest;
   if (SAFE_SINK_PIPE.test(readerStmt) || REDIRECT_TARGET.test(readerStmt)) {
-    return null;
+    return [];
   }
 
-  const subCmd = rest.split(/[|;&<>]/)[0].trim();
-
-  // 1. Sub-expression like (Resolve-Path "big.log")
-  const subExprMatch = subCmd.match(/(?:^|\s|-(?:Path|LiteralPath)\s+)(\(\s*(?:Resolve-Path|Convert-Path|Get-Item|gi|gp)\s+[^)]+\))/i);
-  if (subExprMatch) {
-    return { reader, rawPath: cleanSubExpression(subExprMatch[1]) };
-  }
-
-  // 2. Explicit -Path or -LiteralPath (PowerShell syntax)
-  const flagMatch = subCmd.match(/(?:^|\s)-(?:Path|LiteralPath)\s+("[^"]+"|'[^']+'|[^\s]+)/i);
-  if (flagMatch) {
-    return { reader, rawPath: cleanSubExpression(flagMatch[1]) };
-  }
-
-  // 3. Positional target path, skipping flags (e.g. -Raw, /b, -n)
-  const tokenRegex = /"[^"]+"|'[^']+'|[^\s]+/g;
-  let tokenMatch;
-  while ((tokenMatch = tokenRegex.exec(subCmd)) !== null) {
-    const token = tokenMatch[0];
-    if (token.startsWith('-') || token.startsWith('/')) {
-      if (/^-(?:Encoding|Delimiter|Filter|Include|Exclude)$/i.test(token)) {
-        tokenRegex.exec(subCmd);
-      }
+  const targets = [];
+  const tokens = commandTokens(rest);
+  for (let i = 0; i < tokens.length; i += 1) {
+    const token = tokens[i];
+    if (/^[|;&<>]/.test(token)) break;
+    if (token === ',') continue;
+    if (token.startsWith('-')) {
+      if (/^-(?:Encoding|Delimiter|Filter|Include|Exclude|TotalCount|Tail)$/i.test(token)) i += 1;
       continue;
     }
-    return { reader, rawPath: cleanSubExpression(token) };
+    // Only cmd.exe TYPE's actual switches are options; /tmp/file is a path.
+    if (reader.toLowerCase() === 'type' && /^\/[abp]$/i.test(token)) continue;
+    targets.push({ reader, rawPath: cleanSubExpression(token) });
   }
-  return null;
+  return targets;
 }
 
 export function splitTopLevelPipelines(command) {
@@ -298,7 +382,8 @@ function decide() {
   };
 
   /* S1: mode.json is protected by security policy; no agent may modify it */
-  if (/\bmode\.json\b/i.test(command)) {
+  const pipelines = getSubPipelines(command);
+  if (pipelines.some((pipe) => /\bmode\.json\b/i.test(pipe) && !isReadOnlyModePipeline(unwrapCommand(pipe)))) {
     return deny(
       'mode-json',
       '【安全拦截】禁止通过命令修改 mode.json。运行模式为用户安全配置，只能由用户在 .state/mode.json 手动配置。',
@@ -307,15 +392,12 @@ function decide() {
 
   if (isSubAgent(payload)) return ALLOW;
 
-  const pipelines = getSubPipelines(command);
-
   for (const pipe of pipelines) {
     const effPipe = unwrapCommand(pipe);
 
     /* bounded or safely sunk pipelines are fine ---------------------------- */
     if (
-      BOUNDED_TAIL.test(pipe) ||
-      BOUNDED_TAIL.test(effPipe) ||
+      isBoundedPipeline(effPipe) ||
       SAFE_SINK_PIPE.test(pipe) ||
       SAFE_SINK_PIPE.test(effPipe)
     ) {
@@ -323,15 +405,18 @@ function decide() {
     }
 
     /* unbounded file dump -------------------------------------------------- */
-    const dump = extractDumpTarget(effPipe);
-    if (dump && dump.rawPath && !BOUNDED_FLAG.test(effPipe) && !BOUNDED_FLAG.test(pipe)) {
+    const dumps = extractDumpTargets(effPipe);
+    let dumpedBytes = 0;
+    for (const dump of dumps) {
+      if (!dump.rawPath || BOUNDED_FLAG.test(effPipe) || BOUNDED_FLAG.test(pipe)) continue;
       const target = resolvePath(dump.rawPath, payload);
       try {
         const size = fs.statSync(target).size;
-        if (size > DUMP_BYTES) {
+        dumpedBytes += size;
+        if (dumpedBytes > DUMP_BYTES) {
           return deny(
             'dump',
-            `【命令守门】\`${dump.reader}\` 会把 ${(size / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash 提取要点。`,
+            `【命令守门】\`${dump.reader}\` 会把至少 ${(dumpedBytes / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash 提取要点。`,
           );
         }
       } catch {

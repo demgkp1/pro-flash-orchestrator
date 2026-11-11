@@ -1,10 +1,10 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.5.0「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.5.1「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.5.0)：主控标杆 + Flash 执行工作流
+# `/flash-dev` (v0.5.1)：主控标杆 + Flash 执行工作流
 
 > 降级、防嵌套、写入与切片守门均由 Hook 兜底。子代理统一 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。
 

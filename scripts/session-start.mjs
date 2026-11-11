@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v0.5.0)
+ * SessionStart hook (v0.5.1)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -9,12 +9,16 @@
  * It must not fire inside a sub-agent: a flash worker told "you are Argon the
  * architect" would start delegating (and gets blocked by guard-subagent).
  */
-import { currentMode, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, setContext } from './lib.mjs';
+import fs from 'node:fs';
+import path from 'node:path';
+import { PLUGIN_DIR, currentMode, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, setContext } from './lib.mjs';
 
 const RULES = '[Pro-Flash Orchestrator Active]';
+const DOCTOR = fs.existsSync(path.join(PLUGIN_DIR, 'scripts', 'doctor.mjs'))
+  ? 'node scripts/doctor.mjs' : '在维护工程运行 node scripts/doctor.mjs';
 
 const CARD = [
-  '**Pro-Flash Orchestrator v0.5.0 已接管本会话**',
+  '**Pro-Flash Orchestrator v0.5.1 已接管本会话**',
   '',
   '| 守门 | 行为 |',
   '| --- | --- |',
@@ -24,7 +28,7 @@ const CARD = [
   '| 命令守门 | 拦截 `cat` 超大文件与无界 `git log` |',
   '| 漂移与唤醒 | 长会话新轮次瞬态唤醒，去重切片精准告警 |',
   '',
-  '> 关闭：`PRO_MODE=off`　试运行：`PRO_MODE=shadow`　体检：`node scripts/doctor.mjs`　复盘：`node scripts/report.mjs`',
+  `> 关闭：\`PRO_MODE=off\`　试运行：\`PRO_MODE=shadow\`　体检：${DOCTOR}　复盘：\`node scripts/report.mjs\``,
 ].join('\n');
 
 const payload = readPayload();
@@ -54,7 +58,7 @@ if (mode === 'off') {
           // whole hook result (verified against language_server 2026-11-06).
           // renderInfo is the supported way to render a card to the user.
           renderInfo: {
-            title: 'Pro-Flash Orchestrator v0.5.0',
+            title: 'Pro-Flash Orchestrator v0.5.1',
             titlePrefix: '已接管',
             markdown: CARD,
           },

@@ -1,0 +1,23 @@
+{
+  "files": [
+    "plugin.json",
+    "hooks.json",
+    "LICENSE",
+    "assets/logo.svg",
+    "rules/AGENTS.md",
+    "skills/flash-dev/SKILL.md",
+    "scripts/lib.mjs",
+    "scripts/session-start.mjs",
+    "scripts/pre-invocation.mjs",
+    "scripts/guard-subagent.mjs",
+    "scripts/guard-read-file.mjs",
+    "scripts/guard-write-file.mjs",
+    "scripts/guard-command.mjs",
+    "scripts/report.mjs",
+    { "from": "docs/INSTALL.md", "to": "README.md" }
+  ],
+  "adapters": {
+    "claude": ["hooks/claude-settings-hooks.json"],
+    "codex": ["hooks/codex-hooks.json"]
+  }
+}
