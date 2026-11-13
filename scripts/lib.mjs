@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Shared helpers for pro-flash-orchestrator hooks (v0.3).
+ * Shared helpers for pro-flash-orchestrator hooks (v0.6.1).
  *
  * Design rules:
  *  - Never throw into the caller: every helper is exception-safe, so a hook can
@@ -11,17 +11,23 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_DIR = path.dirname(SCRIPTS_DIR);
 export const STATE_DIR = process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR
   ? path.resolve(process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR)
+  : process.env.PLUGIN_DATA ? path.resolve(process.env.PLUGIN_DATA)
+  : process.env.PRO_HARNESS === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'plugin-data', 'pro-flash-orchestrator')
   : path.join(PLUGIN_DIR, '.state');
 export const SESSION_DIR = path.join(STATE_DIR, 'sessions');
 export const LOG_FILE = path.join(STATE_DIR, 'decisions.jsonl');
 export const SPAWN_FILE = path.join(STATE_DIR, 'last_spawn.json');
 export const SPAWN_LOCK = path.join(STATE_DIR, 'last_spawn.lock');
+const SPAWN_TTL_MS = 10 * 60 * 1000;
+export const CAPABILITIES_FILE = path.join(STATE_DIR, 'capabilities.json');
+const CAPABILITIES_LOCK = `${CAPABILITIES_FILE}.lock`;
 
 /* ------------------------------------------------------------------- locks */
 
@@ -110,9 +116,10 @@ export function releaseLock(lockFile) {
  * Safe atomic write with Windows EPERM retry and copy fallback.
  */
 export function safeWriteFileSync(filePath, content) {
+  let tmpFile;
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 });
-    const tmpFile = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
+    tmpFile = `${filePath}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`;
     fs.writeFileSync(tmpFile, content, { encoding: 'utf8', mode: 0o600 });
     let renamed = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -135,20 +142,30 @@ export function safeWriteFileSync(filePath, content) {
         }
       }
     }
+    return true;
   } catch {
     try {
       fs.writeFileSync(filePath, content, { encoding: 'utf8', mode: 0o600 });
+      return true;
     } catch (err) {
       try {
         process.stderr.write(`[pro-flash-orchestrator] state write failed: ${filePath}: ${err && err.message}\n`);
       } catch {
         /* ignore */
       }
+      return false;
     }
+  } finally {
+    if (tmpFile) { try { fs.unlinkSync(tmpFile); } catch {} }
   }
 }
 
 /* -------------------------------------------------------------- spawn pool */
+
+function isRecentSpawn(spawn, now) {
+  const age = now - Number(spawn?.ts);
+  return Number.isFinite(age) && age >= 0 && age < SPAWN_TTL_MS;
+}
 
 export function markSubagentSpawn(parentConvId) {
   try {
@@ -171,7 +188,7 @@ export function markSubagentSpawn(parentConvId) {
           /* ignore json parse */
         }
       }
-      pool.spawns = pool.spawns.filter((s) => now - Number(s.ts || 0) < 60000);
+      pool.spawns = pool.spawns.filter((spawn) => isRecentSpawn(spawn, now));
       pool.spawns.push({
         id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
         parent: String(parentConvId || ''),
@@ -179,8 +196,7 @@ export function markSubagentSpawn(parentConvId) {
         claimedBy: null,
       });
       pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
-      safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
-      return true;
+      return safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
     } finally {
       if (locked) releaseLock(SPAWN_LOCK);
     }
@@ -204,7 +220,7 @@ export function checkAndClaimSubagent(convId, verifiedParentId) {
       if (!pool || !Array.isArray(pool.spawns)) return null;
 
       const now = Date.now();
-      pool.spawns = pool.spawns.filter((s) => now - Number(s.ts || 0) < 60000);
+      pool.spawns = pool.spawns.filter((spawn) => isRecentSpawn(spawn, now));
 
       // 1. check if already claimed by this convId
       const existing = pool.spawns.find((s) => s.claimedBy === convId && s.parent === verifiedParentId);
@@ -217,7 +233,7 @@ export function checkAndClaimSubagent(convId, verifiedParentId) {
       if (unclaimed) {
         unclaimed.claimedBy = convId;
         pool.pendingCount = pool.spawns.filter((s) => !s.claimedBy).length;
-        safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2));
+        if (!safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2))) return null;
         return { isSubAgent: true, parent: unclaimed.parent };
       }
 
@@ -232,6 +248,44 @@ export function checkAndClaimSubagent(convId, verifiedParentId) {
   }
 }
 
+// Recover a parent only after transcript/contract evidence establishes the role.
+// Claim under the spawn lock so concurrent children do not reuse another child.
+function recoverSubagentParent(convId) {
+  if (!convId || convId === 'unknown') return '';
+  try {
+    ensureStateDir();
+    if (!acquireLock(SPAWN_LOCK, 2000)) return '';
+    try {
+      const pool = JSON.parse(fs.readFileSync(SPAWN_FILE, 'utf8'));
+      if (!Array.isArray(pool?.spawns)) {
+        if (!pool?.parent || !pool.ts) return '';
+        pool.spawns = [{ parent: pool.parent, ts: pool.ts, claimedBy: null }];
+      }
+      const now = Date.now();
+      const recent = pool.spawns.filter((spawn) => {
+        return typeof spawn?.parent === 'string' && spawn.parent && spawn.parent !== convId &&
+          isRecentSpawn(spawn, now);
+      }).sort((a, b) => Number(b.ts) - Number(a.ts));
+      const pending = recent.filter((entry) => !entry.claimedBy);
+      // Timing cannot distinguish simultaneous parent sessions.
+      const spawn = recent.find((entry) => entry.claimedBy === convId) ||
+        (new Set(pending.map((entry) => entry.parent)).size === 1 ? pending[0] : null);
+      if (!spawn) return '';
+      if (!spawn.claimedBy) {
+        spawn.claimedBy = convId;
+        pool.spawns = recent;
+        pool.pendingCount = recent.filter((entry) => !entry.claimedBy).length;
+        if (!safeWriteFileSync(SPAWN_FILE, JSON.stringify(pool, null, 2))) return '';
+      }
+      return spawn.parent;
+    } finally {
+      releaseLock(SPAWN_LOCK);
+    }
+  } catch {
+    return '';
+  }
+}
+
 const MODES = new Set(['off', 'shadow', 'enforce']);
 const MAX_LOG_BYTES = 1024 * 1024;
 
@@ -243,6 +297,7 @@ let HARNESS = 'antigravity';
 export function detectHarness(rawPayload) {
   const raw = rawPayload && typeof rawPayload === 'object' ? rawPayload : null;
   if (!raw) return 'antigravity';
+  if (['codex', 'claude', 'antigravity'].includes(process.env.PRO_HARNESS)) return process.env.PRO_HARNESS;
   if (raw.hook_event_name || raw.session_id || raw.tool_name) {
     const model = String(raw.model || '');
     if (/claude|^(?:haiku|sonnet|opus)\b/i.test(model)) return 'claude';
@@ -259,11 +314,176 @@ export function getHarness() {
   return HARNESS;
 }
 
-export function targetWorkerModel(harness = HARNESS) {
+export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CTX) {
+  if (taskType === 'research' && process.env.PRO_RESEARCH_MODEL) return process.env.PRO_RESEARCH_MODEL;
+  if (taskType === 'self' && process.env.PRO_SELF_MODEL) return process.env.PRO_SELF_MODEL;
   if (process.env.PRO_WORKER_MODEL) return process.env.PRO_WORKER_MODEL;
   if (harness === 'claude') return 'haiku';
   if (harness === 'codex') return 'gpt-5-mini';
+  if (harness === 'antigravity') {
+    if (process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true) {
+      return process.env.PRO_HYDROGEN_ID;
+    }
+    // The host currently accepts only inherit/flash_lite/flash/pro. Hydrogen
+    // main sessions must inherit to avoid silently running a Gemini 3.8 worker.
+    if (modelNames(payload).some((name) => /hydrogen/i.test(name))) return 'inherit';
+    return 'flash';
+  }
   return 'flash';
+}
+
+/* --------------------------------------------------------- AGY capabilities */
+
+function modelNames(payload) {
+  return [payload?.modelName, payload?.model].filter((name) => typeof name === 'string' && name.trim());
+}
+
+function hasGemini4Model(payload) {
+  return modelNames(payload).some((name) => /argon|carbon|hydrogen|orchestrator/i.test(name));
+}
+
+// Unlike isSubAgent(), this role check never persists identity. Capability
+// readers are read-only even when called before the role guard has run.
+function capabilitySubagent(payload) {
+  const p = payload || {};
+  if (p.parentConversationId || p.callerContext?.parentConversationId || p.is_subagent ||
+      (p.agent_id && p.agent_id !== p.session_id)) return true;
+  const verdict = (p._harness || detectHarness(p)) === 'antigravity' ? transcriptVerdict(p.transcriptPath) : null;
+  if (verdict !== null) return verdict;
+  const state = p.conversationId ? readSession(p.conversationId) : {};
+  if (state.isSubAgent === true && state.subagentEvidence) return true;
+  const input = String(p.lastUserInput || '');
+  return /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input) ||
+    /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input) ||
+    (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender=')));
+}
+
+function capabilityStrategy(payload, capabilities) {
+  if ((payload?._harness || detectHarness(payload)) === 'antigravity' &&
+      modelNames(payload).some((name) => /hydrogen/i.test(name)) &&
+      !capabilitySubagent(payload)) return 'hydrogen-main';
+  if ((payload?._harness || detectHarness(payload)) === 'antigravity' &&
+      modelNames(payload).some((name) => /flash/i.test(name)) && !hasGemini4Model(payload) &&
+      !capabilitySubagent(payload)) return 'flash-main-relaxed';
+  return capabilities.hasHydrogen ? 'hydrogen-worker' : 'flash-fallback';
+}
+
+function cachedCapabilities() {
+  try {
+    const data = JSON.parse(fs.readFileSync(CAPABILITIES_FILE, 'utf8'));
+    if (!data || typeof data !== 'object' || typeof data.hasHydrogen !== 'boolean') return null;
+    return {
+      ...data,
+      hasArgon: data.hasArgon === true,
+      hasCarbon: data.hasCarbon === true,
+      hasFlash: data.hasFlash === true,
+      availableModels: Array.isArray(data.availableModels)
+        ? data.availableModels.filter((name) => typeof name === 'string').slice(0, 128) : [],
+    };
+  } catch { return null; }
+}
+
+function inferredCapabilities(payload) {
+  const names = modelNames(payload);
+  return {
+    detectedAt: 0,
+    agyPpid: process.ppid,
+    hasHydrogen: hasGemini4Model(payload),
+    hasArgon: names.some((name) => /argon|orchestrator/i.test(name)),
+    hasCarbon: names.some((name) => /carbon/i.test(name)),
+    hasFlash: true,
+    availableModels: [...new Set(names)],
+    cliProbeSucceeded: false,
+    source: 'payload',
+  };
+}
+
+/** Cheap, read-only routing: no command, cache write, or identity update. */
+export function readCapabilities(payload = CTX) {
+  const cached = cachedCapabilities();
+  const capabilities = cached || inferredCapabilities(payload);
+  // Payload inference cannot overrule an explicit CLI denial. A failed probe
+  // may be upgraded when a later session provides Gemini 4 model evidence.
+  if (cached?.cliProbeSucceeded === false && hasGemini4Model(payload)) capabilities.hasHydrogen = true;
+  return { ...capabilities, strategy: capabilityStrategy(payload, capabilities) };
+}
+
+function reusableCapabilities(cached, now) {
+  if (!cached || !Number.isFinite(cached.detectedAt)) return false;
+  const age = now - cached.detectedAt;
+  return age >= 0 && (age < 60 * 60 * 1000 ||
+    (cached.agyPpid === process.ppid && age < 12 * 60 * 60 * 1000));
+}
+
+function parseAvailableModels(text) {
+  const clean = String(text).replace(/\x1b\[[0-9;]*m/g, '');
+  let rows;
+  try {
+    const data = JSON.parse(clean);
+    rows = Array.isArray(data) ? data : data.models || data.availableModels;
+    if (!Array.isArray(rows)) return [];
+    return [...new Set(rows.filter((row) => typeof row === 'string' || (row &&
+      row.available !== false && row.enabled !== false && row.accessible !== false && row.entitled !== false))
+      .map((row) => typeof row === 'string' ? row : row.id || row.modelId || row.name || '')
+      .filter((name) => typeof name === 'string' && name.trim()).map((name) => name.trim()))].slice(0, 128);
+  } catch {
+    return [...new Set(clean.split(/\r?\n/)
+      .filter((line) => !/unavailable|not available|disabled|denied|no access|无权限|不可用|未授权/i.test(line))
+      .flatMap((line) => line.match(/\b[a-z0-9][a-z0-9._:/-]*\b/gi) || [])
+      .filter((name) => /hydrogen|argon|carbon|orchestrator|flash/i.test(name)))].slice(0, 128);
+  }
+}
+
+/** SessionStart-only probe, shared across AGY sessions with bounded caching. */
+export function detectModelCapabilities(payload = CTX, force = false) {
+  if ((payload?._harness || detectHarness(payload)) !== 'antigravity' || capabilitySubagent(payload)) {
+    return readCapabilities(payload);
+  }
+  if (!force && reusableCapabilities(cachedCapabilities(), Date.now())) return readCapabilities(payload);
+  ensureStateDir();
+  const locked = acquireLock(CAPABILITIES_LOCK, 2500);
+  if (!locked) return readCapabilities(payload);
+  try {
+    const cached = cachedCapabilities();
+    if (!force && reusableCapabilities(cached, Date.now())) return readCapabilities(payload);
+    let capabilities;
+    const started = Date.now();
+    const options = { timeout: 2500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 256 * 1024 };
+    try {
+      let text;
+      try { text = execFileSync('agy', ['models'], options); }
+      catch (error) {
+        if (process.platform !== 'win32' || error.code === 'ETIMEDOUT' || Date.now() - started >= 2500) throw error;
+        // Windows cannot execute a .cmd shim directly through execFileSync.
+        text = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'agy.cmd models'],
+          { ...options, timeout: Math.max(1, 2500 - (Date.now() - started)) });
+      }
+      const models = parseAvailableModels(text);
+      if (models.length === 0) throw new Error('No models parsed from agy output');
+      capabilities = {
+        hasHydrogen: models.some((name) => /hydrogen/i.test(name)),
+        hasArgon: models.some((name) => /argon|orchestrator/i.test(name)),
+        hasCarbon: models.some((name) => /carbon/i.test(name)),
+        hasFlash: models.some((name) => /flash/i.test(name)),
+        availableModels: models, cliProbeSucceeded: true, source: 'cli',
+      };
+    } catch {
+      // Retain a previously successful ACL result when a later CLI is missing.
+      capabilities = cached && cached.cliProbeSucceeded !== false
+        ? { ...cached, source: 'cli-cache' } : inferredCapabilities(payload);
+    }
+    const result = { ...capabilities, detectedAt: Date.now(), agyPpid: process.ppid };
+    result.strategy = capabilityStrategy(payload, result);
+    safeWriteFileSync(CAPABILITIES_FILE, JSON.stringify(result, null, 2));
+    return result;
+  } finally { releaseLock(CAPABILITIES_LOCK); }
+}
+
+/** Native Orchestrator owns dispatch and file-count policy; retain other guards. */
+export function isNativeOrchestrator(payload) {
+  return process.env.PRO_NATIVE_ORCHESTRATOR === '1' ||
+    /orchestrator/i.test(String(payload?.modelName || '')) ||
+    /orchestrator/i.test(String(payload?.model || ''));
 }
 
 function splitArgsCommand(cmd) {
@@ -279,7 +499,7 @@ function splitArgsCommand(cmd) {
 }
 
 export function extractApplyPatchPaths(input) {
-  const text = typeof input === 'string' ? input : String((input && (input.patch || input.input)) || '');
+  const text = typeof input === 'string' ? input : String((input && (input.command || input.patch || input.input)) || '');
   const paths = [];
   for (const match of text.matchAll(/^\*\*\* (?:Update File:|Add File:|Delete File:|Move to:) (.+)\r?$/gm)) {
     paths.push(match[1].trim());
@@ -398,7 +618,7 @@ export function normalizeIncomingPayload(raw, harness = HARNESS) {
           ? 'research'
           : 'self';
       const model = input.model || input.Model || 'inherit';
-      const prompt = input.prompt !== undefined ? input.prompt : input.Prompt !== undefined ? input.Prompt : '';
+      const prompt = input.message !== undefined ? input.message : input.prompt !== undefined ? input.prompt : input.Prompt !== undefined ? input.Prompt : '';
       raw.toolCall = {
         name: 'invoke_subagent',
         args: {
@@ -463,7 +683,11 @@ export function mentions(payload, token) {
  * The transcript is authoritative when readable, because `lastUserInput` is the
  * *user's* message for a main agent and a user may paste those tokens.
  */
-function transcriptVerdict(rawPath) {
+const PARENT_SENDER_RE = /\bsender=([a-zA-Z0-9._:-]+)/;
+const PARENT_MARKER_RE = /\[PRO-PARENT:([a-zA-Z0-9._:-]+)\]/;
+const workerParentId = (text) => text.match(PARENT_MARKER_RE)?.[1] || text.match(PARENT_SENDER_RE)?.[1] || '';
+
+function transcriptIdentity(rawPath) {
   try {
     if (!rawPath || typeof rawPath !== 'string' || !fs.existsSync(rawPath)) return null;
     const fd = fs.openSync(rawPath, 'r');
@@ -492,7 +716,8 @@ function transcriptVerdict(rawPath) {
       } catch {
         const srcMatch = lines[i].match(/"source"\s*:\s*"([^"]+)"/);
         if (srcMatch) {
-          step = { source: srcMatch[1], content: '' };
+          // Preserve markers when the first SYSTEM line exceeds the 64 KB read.
+          step = { source: srcMatch[1], content: lines[i] };
         }
       }
 
@@ -500,7 +725,7 @@ function transcriptVerdict(rawPath) {
         parsedAnyStep = true;
         const source = String(step.source || '');
         if (source === 'USER_EXPLICIT' || source === 'USER_INPUT') {
-          return false;
+          return { verdict: false, parentId: '' };
         }
         if (source === 'SYSTEM_SDK') {
           continue;
@@ -514,22 +739,27 @@ function transcriptVerdict(rawPath) {
             content.includes('[PRO-CONTRACT]') ||
             content.includes('[ARGON-CONTRACT]')
           ) {
-            return true;
+            return { verdict: true, parentId: workerParentId(content) };
           }
         }
       }
     }
 
     if (!parsedAnyStep) {
-      if (text.includes('<SYSTEM_MESSAGE>') && (text.includes('[Message]') || text.includes('sender='))) {
-        return true;
+      if ((text.includes('<SYSTEM_MESSAGE>') && (text.includes('[Message]') || text.includes('sender='))) ||
+          /\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(text)) {
+        return { verdict: true, parentId: workerParentId(text) };
       }
     }
 
-    return false;
+    return { verdict: false, parentId: '' };
   } catch {
     return null;
   }
+}
+
+function transcriptVerdict(rawPath) {
+  return transcriptIdentity(rawPath)?.verdict ?? null;
 }
 
 export function isSubAgent(payload) {
@@ -541,26 +771,29 @@ export function isSubAgent(payload) {
     const ctx = p.callerContext;
     const parent = p.parentConversationId || (ctx && typeof ctx === 'object' && ctx.parentConversationId);
     const remember = (evidence, parentId = '') => {
+      const resolvedParent = parentId || sess.parentConversationId ||
+        (!isDoctor && HARNESS === 'antigravity' ? recoverSubagentParent(convId) : '');
       if (sess.isSubAgent === true && sess.subagentEvidence === evidence &&
-          (!parentId || sess.parentConversationId === String(parentId))) return;
+          (!resolvedParent || sess.parentConversationId === String(resolvedParent))) return;
       if (convId && convId !== 'unknown' && !isDoctor && HARNESS === 'antigravity') {
+        if (parentId && !sess.subagentEvidence) checkAndClaimSubagent(convId, String(parentId));
         updateSession(convId, (state) => {
           state.isSubAgent = true;
           state.subagentEvidence = evidence;
-          if (parentId) state.parentConversationId = String(parentId);
+          if (resolvedParent) state.parentConversationId = String(resolvedParent);
         });
       }
     };
 
     if (parent) {
-      if (!isDoctor && HARNESS === 'antigravity' && !sess.subagentEvidence) checkAndClaimSubagent(convId, String(parent));
       remember('parent', parent);
       return true;
     }
 
-    const verdict = HARNESS === 'antigravity' ? transcriptVerdict(p.transcriptPath) : null;
+    const identity = HARNESS === 'antigravity' ? transcriptIdentity(p.transcriptPath) : null;
+    const verdict = identity?.verdict ?? null;
     if (verdict === true) {
-      remember('transcript');
+      remember('transcript', identity.parentId);
       return true;
     }
     if (verdict === false) {
@@ -576,20 +809,20 @@ export function isSubAgent(payload) {
 
     // Ignore legacy cached positives: they may have come from the global spawn
     // heuristic. Newly cached roles carry their actual source of evidence.
-    if (!isDoctor && sess.isSubAgent === true && sess.subagentEvidence) return true;
-
     const input = String(p.lastUserInput || '');
+    const senderParent = workerParentId(input);
+    const contractInput =
+      (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender='))) ||
+      /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input) ||
+      /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input);
+    if (!isDoctor && sess.isSubAgent === true && sess.subagentEvidence) {
+      remember(sess.subagentEvidence, sess.parentConversationId || (contractInput ? senderParent : ''));
+      return true;
+    }
+
     // Cold-start sub-agent: system message wrapper or prefixed/appended contract marker.
-    if (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender='))) {
-      remember('contract');
-      return true;
-    }
-    if (/^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input)) {
-      remember('contract');
-      return true;
-    }
-    if (/\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input)) {
-      remember('contract');
+    if (contractInput) {
+      remember('contract', senderParent);
       return true;
     }
     return false;
@@ -726,6 +959,7 @@ export function maskSecrets(value) {
     .replace(/(Bearer\s+)[A-Za-z0-9._~+/-]+/gi, '$1***')
     .replace(/\b(sk-[A-Za-z0-9]{20,})\b/g, 'sk-***')
     .replace(/\b(ghp_[A-Za-z0-9]{20,})\b/g, 'ghp_***')
+    .replace(/((?:password|passwd|secret|token|api_key|apiKey)\s*[:=]\s*)(["'])([^"']*)\2/gi, '$1$2***$2')
     .replace(/((?:password|passwd|secret|token|api_key|apiKey)\s*[:=]\s*)[^\s;&|'"]+/gi, '$1***');
 }
 
@@ -755,7 +989,7 @@ export function logDecision(entry) {
     const record = {
       ts: new Date().toISOString(),
       ...(conv ? { conv } : {}),
-      ...(process.env.ARGON_TEST === '1' ? { test: true } : {}),
+      ...((process.env.PRO_TEST === '1' || process.env.ARGON_TEST === '1') ? { test: true } : {}),
       ...safeEntry,
     };
     try {
@@ -834,12 +1068,13 @@ export function translateOutput(obj) {
         rawTool === 'invoke_subagent'
       ) {
         if (out.overwrite.Model !== undefined) {
-          updatedInput.model = targetWorkerModel();
+          updatedInput.model = out.overwrite.Model;
         }
         const nextPrompt =
           out.overwrite.Prompt !== undefined ? out.overwrite.Prompt : out.overwrite.prompt;
         if (nextPrompt !== undefined) {
-          updatedInput.prompt = nextPrompt;
+          const promptField = rawTool === 'spawn_agent' && 'message' in rawInput ? 'message' : 'prompt';
+          updatedInput[promptField] = nextPrompt;
         }
       } else {
         Object.assign(updatedInput, out.overwrite);
@@ -997,6 +1232,10 @@ function defaultSession(extra = {}) {
     currentBatchSpawns: 0,
     lastSpawnAt: 0,
     maxReadsAllowed: 3,
+    phase: 'explore',
+    auditSliceQuota: 0,
+    auditPendingWakeup: false,
+    subagentCommands: [],
     activeSubagents: [],
     ...(extra && typeof extra === 'object' ? extra : {}),
   };
@@ -1020,14 +1259,22 @@ export function updateSession(convId, mutatorFn) {
   // rejected update instead of silently overwriting another process's work.
   if (!locked) return null;
   try {
-    const current = readSession(convId);
+    let current;
+    try {
+      const parsed = JSON.parse(fs.readFileSync(sessionFile(convId), 'utf8'));
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+      current = defaultSession(parsed);
+    } catch (error) {
+      // A corrupt or unreadable file must not erase another worker's claims.
+      if (error.code !== 'ENOENT') return null;
+      current = defaultSession();
+    }
     let updated = typeof mutatorFn === 'function' ? mutatorFn(current) : current;
     if (updated === undefined) {
       updated = current;
     }
     const finalData = defaultSession(updated);
-    safeWriteFileSync(sessionFile(convId), JSON.stringify(finalData));
-    return finalData;
+    return safeWriteFileSync(sessionFile(convId), JSON.stringify(finalData)) ? finalData : null;
   } catch {
     return null;
   } finally {

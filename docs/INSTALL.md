@@ -16,7 +16,10 @@ node "{{MAINTENANCE_DIR}}/scripts/install.mjs" --target "{{INSTALL_DIR}}"
 node "{{MAINTENANCE_DIR}}/scripts/doctor.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-concurrency.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-regressions.mjs"
+node "{{MAINTENANCE_DIR}}/scripts/test-v060.mjs"
+node "{{MAINTENANCE_DIR}}/scripts/test-capabilities.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-install.mjs"
+node "{{MAINTENANCE_DIR}}/scripts/test-codex.mjs"
 ```
 
 查看本安装目录的决策日志：

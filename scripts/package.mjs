@@ -12,6 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runtimeEntries, readProjectFile, renderInstallReadme } from './runtime-files.mjs';
+import { codexMarketplaceFiles } from './codex-maintenance.mjs';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = path.dirname(SCRIPTS_DIR);
@@ -25,6 +26,7 @@ function parseArgs(argv) {
     outFile: '',
     worktree: false,
     runtime: false,
+    platform: '',
   };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
@@ -38,6 +40,9 @@ function parseArgs(argv) {
       opts.outFile = path.resolve(String(argv[++i] || ''));
     } else if (arg === '--worktree') {
       opts.worktree = true;
+    } else if (arg === '--platform') {
+      opts.platform=String(argv[++i] || '');
+      if(!['antigravity','codex','all'].includes(opts.platform))throw new Error('Unsupported package platform');
     } else if (arg === '--runtime') {
       opts.runtime = true;
     } else if (arg === '--source') {
@@ -53,13 +58,14 @@ export function normalizeTag(raw) {
   return s.startsWith('v') ? s : `v${s}`;
 }
 
-export function resolveTag(explicitTag) {
+export function resolveTag(explicitTag, { worktree = false, ref = 'HEAD' } = {}) {
   if (explicitTag) return normalizeTag(explicitTag);
+  if (worktree) return normalizeTag(JSON.parse(readProjectFile('plugin.json')).version);
   if (process.env.GITHUB_REF_TYPE === 'tag' && process.env.GITHUB_REF_NAME) {
     return normalizeTag(process.env.GITHUB_REF_NAME);
   }
   try {
-    const exact = execFileSync('git', ['describe', '--tags', '--exact-match', 'HEAD'], {
+    const exact = execFileSync('git', ['describe', '--tags', '--exact-match', ref], {
       cwd: ROOT_DIR,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -68,7 +74,7 @@ export function resolveTag(explicitTag) {
   } catch {
     /* HEAD is not tagged */
   }
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'plugin.json'), 'utf8'));
+  const pkg = JSON.parse(readProjectFile('plugin.json', { worktree: false, ref }).toString('utf8'));
   return normalizeTag(pkg.version || '0.0.0');
 }
 
@@ -102,26 +108,27 @@ export function listZipEntries(zipPath) {
   return entries;
 }
 
-export function verifyZipLayout(zipPath, allowedFiles = null) {
+export function verifyZipLayout(zipPath, allowedFiles = null, options = {}) {
+  const prefix=options.prefix || PREFIX;
   const entries = listZipEntries(zipPath);
   if (entries.length === 0) {
     throw new Error(`Archive is empty: ${zipPath}`);
   }
   for (const entry of entries) {
-    if (!entry.startsWith(PREFIX)) {
-      throw new Error(`Loose root entry found (expected "${PREFIX}*"): ${entry}`);
+    if (!entry.startsWith(prefix)) {
+      throw new Error(`Loose root entry found (expected "${prefix}*"): ${entry}`);
     }
-    if (entry.startsWith(`${PREFIX}.git/`) || entry.startsWith(`${PREFIX}.state/`)) {
+    if (entry.split('/').some(part=>['.git','.state','.maintenance'].includes(part))) {
       throw new Error(`Forbidden internal directory in archive: ${entry}`);
     }
   }
-  for (const required of [`${PREFIX}plugin.json`, `${PREFIX}hooks.json`, `${PREFIX}scripts/lib.mjs`]) {
+  for (const required of (options.required || ['plugin.json','hooks.json','scripts/lib.mjs']).map(file=>prefix+file)) {
     if (!entries.includes(required)) {
       throw new Error(`Missing required file in archive: ${required}`);
     }
   }
   if (allowedFiles) {
-    const allowed = new Set(allowedFiles.map((file) => `${PREFIX}${file}`));
+    const allowed = new Set(allowedFiles.map((file) => prefix+file));
     for (const entry of entries) {
       if (!entry.endsWith('/') && !allowed.has(entry)) throw new Error(`Non-runtime file in archive: ${entry}`);
     }
@@ -133,24 +140,25 @@ export function verifyZipLayout(zipPath, allowedFiles = null) {
 }
 
 function packageFromWorktree(outFile, runtimeOptions = null) {
-  const rawList = execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
-    cwd: ROOT_DIR,
-  });
-  const relFiles = runtimeOptions ? runtimeEntries(runtimeOptions) : rawList
-    .toString('utf8')
-    .split('\0')
-    .filter((f) => f && !f.startsWith('.git/') && !f.startsWith('.state/') && !f.startsWith('dist/') && !f.endsWith('.zip'));
+  const codexFiles=runtimeOptions?.platform === 'codex' ? codexMarketplaceFiles(runtimeOptions) : null;
+  const relFiles = codexFiles || (runtimeOptions
+    ? runtimeEntries({...runtimeOptions,platform:runtimeOptions.platform || 'all'})
+    : execFileSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], { cwd: ROOT_DIR })
+      .toString('utf8')
+      .split('\0')
+      .filter((f) => f && !f.startsWith('.git/') && !f.startsWith('.state/') && !f.startsWith('dist/') && !f.endsWith('.zip')));
 
   const stageRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-pkg-'));
-  const stageDir = path.join(stageRoot, 'pro-flash-orchestrator');
+  const stageDir = path.join(stageRoot, codexFiles ? 'pro-flash-orchestrator-codex' : 'pro-flash-orchestrator');
   try {
     for (const file of relFiles) {
-      const rel = runtimeOptions ? file.from : file;
+      const rel = codexFiles ? file.to : runtimeOptions ? file.from : file;
       const src = path.join(ROOT_DIR, rel);
       if (!runtimeOptions && (!fs.existsSync(src) || !fs.statSync(src).isFile())) continue;
       const dst = path.join(stageDir, runtimeOptions ? file.to : rel);
       fs.mkdirSync(path.dirname(dst), { recursive: true });
-      if (runtimeOptions) {
+      if (codexFiles) fs.writeFileSync(dst,file.content);
+      else if (runtimeOptions) {
         let content = readProjectFile(rel, runtimeOptions);
         if (rel === 'docs/INSTALL.md') content = renderInstallReadme(content);
         fs.writeFileSync(dst, content);
@@ -172,7 +180,7 @@ function packageFromWorktree(outFile, runtimeOptions = null) {
       ].join('; ');
       execFileSync('powershell', ['-NoProfile', '-Command', ps], { stdio: 'inherit', windowsHide: true });
     } else {
-      execFileSync('zip', ['-rq', outFile, 'pro-flash-orchestrator'], {
+      execFileSync('zip', ['-rq', outFile, path.basename(stageDir)], {
         cwd: stageRoot,
         stdio: 'inherit',
       });
@@ -185,13 +193,13 @@ function packageFromWorktree(outFile, runtimeOptions = null) {
 }
 
 export function createReleaseZip(opts) {
-  const tag = resolveTag(opts.tag);
-  const outFile = opts.outFile || path.join(opts.outDir, `pro-flash-orchestrator-${tag}.zip`);
+  const tag = resolveTag(opts.tag, opts);
+  const outFile = opts.outFile || path.join(opts.outDir, 'pro-flash-orchestrator'+(opts.runtime&&opts.platform&&opts.platform!=='all'?'-'+opts.platform:'')+'-'+tag+'.zip');
   fs.mkdirSync(path.dirname(outFile), { recursive: true });
   if (fs.existsSync(outFile)) fs.unlinkSync(outFile);
 
   if (opts.runtime) {
-    packageFromWorktree(outFile, { worktree: Boolean(opts.worktree), ref: opts.ref || 'HEAD' });
+    packageFromWorktree(outFile, { worktree: Boolean(opts.worktree), ref: opts.ref || 'HEAD',platform:opts.platform || 'all' });
   } else if (opts.worktree) {
     packageFromWorktree(outFile);
   } else {
@@ -202,14 +210,17 @@ export function createReleaseZip(opts) {
     );
   }
 
-  const allowed = opts.runtime ? runtimeEntries({ worktree: Boolean(opts.worktree), ref: opts.ref || 'HEAD' }).map((file) => file.to) : null;
-  const entries = verifyZipLayout(outFile, allowed);
-  return { tag, outFile, entryCount: entries.length };
+  const source={worktree:Boolean(opts.worktree),ref:opts.ref || 'HEAD',platform:opts.platform || 'all'};
+  const codex=opts.runtime&&opts.platform==='codex';
+  const root=codex?'pro-flash-orchestrator-codex/':PREFIX;
+  const allowed=opts.runtime ? (codex?codexMarketplaceFiles(source):runtimeEntries(source)).map(file=>file.to):null;
+  const entries=verifyZipLayout(outFile,allowed,codex?{prefix:root,required:['.agents/plugins/marketplace.json','plugins/pro-flash-orchestrator/plugin.json','plugins/pro-flash-orchestrator/hooks/hooks.json','plugins/pro-flash-orchestrator/scripts/lib.mjs']}:{});
+  return { tag, outFile, entryCount: entries.length, root };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))) {
   const opts = parseArgs(process.argv.slice(2));
   const result = createReleaseZip(opts);
   const sizeKb = (fs.statSync(result.outFile).size / 1024).toFixed(1);
-  console.log(`Packaged ${result.outFile} (${result.entryCount} entries, ${sizeKb} KB, root=${PREFIX})`);
+  console.log(`Packaged ${result.outFile} (${result.entryCount} entries, ${sizeKb} KB, root=${result.root})`);
 }

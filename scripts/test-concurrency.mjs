@@ -342,14 +342,15 @@ async function test3_quotaAndDynamicRead() {
     testFiles.push(file);
   }
 
+  // Use >80-line requests to verify ordinary quota independently of audit slices.
   for (let f = 0; f < 6; f++) {
     const r = runHook('guard-read-file.mjs', {
       conversationId: readConvId,
       toolCall: {
         name: 'read_file',
-        args: { Path: testFiles[f], StartLine: 1, EndLine: 2 },
+        args: { Path: testFiles[f], StartLine: 1, EndLine: 81 },
       },
-      lastUserInput: '请审查代码',
+      lastUserInput: '开始多代理协同',
     });
     assert.equal(r.decision, 'allow', `Read ${f+1} should be allowed, got ${JSON.stringify(r)}`);
   }
@@ -358,9 +359,9 @@ async function test3_quotaAndDynamicRead() {
     conversationId: readConvId,
     toolCall: {
       name: 'read_file',
-      args: { Path: testFiles[6], StartLine: 1, EndLine: 2 },
+      args: { Path: testFiles[6], StartLine: 1, EndLine: 81 },
     },
-    lastUserInput: '请审查代码',
+    lastUserInput: '开始多代理协同',
   });
   assert.equal(r7.decision, 'deny', `7th read should be denied, got ${JSON.stringify(r7)}`);
   assert(r7.reason.includes('6 个不同文件'), `Reason should mention 6 files, got: ${r7.reason}`);
@@ -452,12 +453,14 @@ async function main() {
     console.log('\n====================================================');
     console.log('🎉 所有并发、配额与守门集成测试 100% 通过！');
     console.log('====================================================\n');
-    process.exit(0);
+    process.exitCode = 0;
   } catch (err) {
     console.error('\n❌ 测试失败:', err);
-    process.exit(1);
+    process.exitCode = 1;
   } finally {
     try {
+      if (path.dirname(path.resolve(TMP_DIR)) !== path.resolve(os.tmpdir()) ||
+          !path.basename(TMP_DIR).startsWith('pro-concurrency-state-')) throw new Error('Unsafe concurrency cleanup target');
       fs.rmSync(TMP_DIR, { recursive: true, force: true });
     } catch {}
   }

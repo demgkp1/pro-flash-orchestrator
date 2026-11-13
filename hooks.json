@@ -23,7 +23,7 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "invoke_subagent|define_subagent|send_message|manage_subagents",
+        "matcher": "invoke_subagent|define_subagent|send_message|manage_subagents|Task|Agent|spawn_agent",
         "hooks": [
           {
             "type": "command",
@@ -38,7 +38,7 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content",
+        "matcher": "write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content|Write|Edit|MultiEdit|apply_patch",
         "hooks": [
           {
             "type": "command",
@@ -53,7 +53,7 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "read_file|view_file|view_content_chunk",
+        "matcher": "read_file|view_file|view_content_chunk|Read",
         "hooks": [
           {
             "type": "command",
@@ -68,7 +68,7 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "run_command",
+        "matcher": "run_command|Bash|shell|exec_command",
         "hooks": [
           {
             "type": "command",

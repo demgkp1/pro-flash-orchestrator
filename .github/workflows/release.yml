@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (optional, e.g. v0.5.1)'
+        description: 'Release tag (optional, e.g. v0.6.1)'
         required: false
         default: ''
         type: string
@@ -30,33 +30,44 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Run test gates
+      - name: Run public test gates
         run: |
           node scripts/doctor.mjs
           node scripts/test-concurrency.mjs
           node scripts/test-regressions.mjs
+          node scripts/test-v060.mjs
+          node scripts/test-capabilities.mjs
           node scripts/test-install.mjs
+          node scripts/test-codex.mjs
 
-      - name: Package release archive
+      - name: Package platform release archives
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
           if [ -n "$RELEASE_TAG" ]; then
-            node scripts/package.mjs --runtime --out-dir dist --tag "$RELEASE_TAG"
+            node scripts/package.mjs --runtime --platform antigravity --out-dir dist --tag "$RELEASE_TAG"
+            node scripts/package.mjs --runtime --platform codex --out-dir dist --tag "$RELEASE_TAG"
           else
-            node scripts/package.mjs --runtime --out-dir dist
+            node scripts/package.mjs --runtime --platform antigravity --out-dir dist
+            node scripts/package.mjs --runtime --platform codex --out-dir dist
           fi
 
-      - name: Verify archive layout
+      - name: Verify platform archive layouts
         run: |
-          unzip -l dist/*.zip
-          BAD_ENTRIES=$(unzip -Z1 dist/*.zip | grep -v '^pro-flash-orchestrator/' || true)
-          if [ -n "$BAD_ENTRIES" ]; then
-            echo "Error: Found archive entries outside pro-flash-orchestrator/:"
-            echo "$BAD_ENTRIES"
+          ANTIGRAVITY_ARCHIVE=$(find dist -maxdepth 1 -type f -name 'pro-flash-orchestrator-antigravity-v*.zip')
+          CODEX_ARCHIVE=$(find dist -maxdepth 1 -type f -name 'pro-flash-orchestrator-codex-v*.zip')
+          test "$(printf '%s\n' "$ANTIGRAVITY_ARCHIVE" | grep -c .)" -eq 1
+          test "$(printf '%s\n' "$CODEX_ARCHIVE" | grep -c .)" -eq 1
+          unzip -l "$ANTIGRAVITY_ARCHIVE"
+          unzip -l "$CODEX_ARCHIVE"
+          BAD_ANTIGRAVITY=$(unzip -Z1 "$ANTIGRAVITY_ARCHIVE" | grep -v '^pro-flash-orchestrator/' || true)
+          BAD_CODEX=$(unzip -Z1 "$CODEX_ARCHIVE" | grep -v '^pro-flash-orchestrator-codex/' || true)
+          if [ -n "$BAD_ANTIGRAVITY" ] || [ -n "$BAD_CODEX" ]; then
+            echo "Error: archive entry escaped its platform root"
+            printf '%s\n%s\n' "$BAD_ANTIGRAVITY" "$BAD_CODEX"
             exit 1
           fi
-          echo "Verified: all entries start with pro-flash-orchestrator/"
+          echo "Verified both platform roots; package.mjs already enforced each exact runtime allowlist."
 
       - name: Create or update GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')

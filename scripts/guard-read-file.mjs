@@ -23,6 +23,7 @@ import {
   fileInfo,
   getArgs,
   isExemptPath,
+  isNativeOrchestrator,
   isSubAgent,
   lastUserInput,
   logDecision,
@@ -30,8 +31,10 @@ import {
   output,
   pickPath,
   readPayload,
+  readCapabilities,
   resolvePath,
   setContext,
+  targetWorkerModel,
   toolName,
   updateSession,
 } from './lib.mjs';
@@ -64,7 +67,7 @@ function pickNumber(args, keys) {
     const raw = args[key];
     if (raw === undefined || raw === null || raw === '') continue;
     const n = Number(raw);
-    if (Number.isFinite(n) && n >= 1) return Math.floor(n);
+    if (Number.isSafeInteger(n) && n >= 1) return n;
   }
   return null;
 }
@@ -86,6 +89,10 @@ function decide() {
   if (!file) return ALLOW;
 
   const sub = isSubAgent(payload);
+  const native = isNativeOrchestrator(payload);
+  const { strategy } = readCapabilities(payload);
+  const baseReads = strategy === 'flash-main-relaxed' ? 6 : 3;
+  const researcher = targetWorkerModel(undefined, 'research', payload);
   const info = fileInfo(file);
   const base = basenameOf(file);
   const ext = path.extname(file).toLowerCase();
@@ -99,6 +106,7 @@ function decide() {
     tool,
     mode,
     sub,
+    native,
     base,
     path: file.length > 180 ? `…${file.slice(-179)}` : file,
     bytes: info.bytes || 0,
@@ -116,7 +124,11 @@ function decide() {
       : overwrite
         ? mode === 'enforce' ? 'slice' : 'would-slice'
         : 'pass';
-    logDecision({ ...record, action });
+    const requestedLines = Math.max(0,
+      Math.min(end ?? info.lines ?? 0, info.lines || 0) - (start ?? 1) + 1);
+    const deliveredLines = deny ? 0 : overwrite ? Math.min(requestedLines,
+      Math.max(0, (overwrite.EndLine ?? end ?? info.lines ?? 0) - (overwrite.StartLine ?? start ?? 1) + 1)) : requestedLines;
+    logDecision({ ...record, action, ...(deny || overwrite ? { requestedLines, deliveredLines, ...(reason ? { reason } : {}) } : {}) });
     if (mode === 'shadow') return ALLOW;
     if (deny) return { decision: 'deny', reason };
     if (overwrite) return { decision: 'allow', overwrite };
@@ -131,7 +143,7 @@ function decide() {
   if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {
     return finish({
       deny: true,
-      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 flash 抽样，或明确传入 StartLine/EndLine。`,
+      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 ${researcher} 抽样，或明确传入 StartLine/EndLine。`,
     });
   }
 
@@ -142,11 +154,14 @@ function decide() {
     if ((info.bytes || 0) > CODE_HARD_BYTES && (info.avgLineBytes || 0) > 4096) {
       return finish({
         deny: true,
-        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="flash") 检索或用 grep_search 定位。`,
+        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="${researcher}") 检索或用 grep_search 定位。`,
       });
     }
     const from = start ?? 1;
     const to = end ?? from + MAX_SPAN - 1;
+    if (to < from) {
+      return finish({ deny: true, reason: '【读取守门】EndLine 必须大于或等于 StartLine。' });
+    }
     if (to - from + 1 > MAX_SPAN && !SLICE_CAPABLE.has(tool)) {
       return finish({
         deny: true,
@@ -160,7 +175,7 @@ function decide() {
         const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
         return finish({
           deny: true,
-          reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="flash") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
+          reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="${researcher}") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
         });
       }
     }
@@ -171,7 +186,7 @@ function decide() {
         const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
         return finish({
           deny: true,
-          reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+          reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="${researcher}") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
         });
       }
     }
@@ -182,29 +197,52 @@ function decide() {
         const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
         return finish({
           deny: true,
-          reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="flash") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
+          reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="${researcher}") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
         });
       }
     }
   }
 
   /* multi-file continuous read quota check (single session transaction) - */
-  if (CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext)) {
+  const trackedExtension = CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext);
+  const exactAuditSlice = start !== null && end !== null && end >= start && end - start + 1 <= 80;
+  if (!native && (trackedExtension || exactAuditSlice)) {
     const convId = String(payload.conversationId || 'unknown');
     const uInput = lastUserInput(payload).trim();
     const normFile = process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
     let shouldDenyQuota = false;
     let currentReads = [];
-    let quotaLimit = 3;
+    let quotaLimit = baseReads;
+    let auditSlice = false;
 
     const updated = updateSession(convId, (state) => {
+      if (state.strategy !== strategy) {
+        state.maxReadsAllowed = state.phase === 'audit'
+          ? Math.max(baseReads, state.maxReadsAllowed || baseReads) : baseReads;
+      }
+      state.strategy = strategy;
       if (uInput && uInput !== state.lastReadUserInput) {
+        // A first read after dispatch still belongs to that dispatch's turn.
+        const isAuditRead = state.phase === 'audit' && Number(state.auditSliceQuota) > 0;
+        if (!isAuditRead && state.lastSpawnUserInput !== uInput && state.lastUserInput !== uInput) {
+          state.phase = 'explore';
+          state.auditSliceQuota = 0;
+          state.auditPendingWakeup = false;
+          state.maxReadsAllowed = baseReads;
+        }
         state.lastReadUserInput = uInput;
         state.readsSinceDispatch = [];
       }
+      const remaining = Math.min(10, Math.max(0, Number(state.auditSliceQuota) || 0));
+      if ((state.phase === 'audit' || remaining > 0) && remaining > 0 && exactAuditSlice) {
+        state.auditSliceQuota = remaining - 1;
+        auditSlice = true;
+        return state;
+      }
+      if (!trackedExtension) return state;
       const readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
       currentReads = readList;
-      const maxLimit = state.maxReadsAllowed || 3;
+      const maxLimit = Math.max(baseReads, state.maxReadsAllowed || baseReads);
       quotaLimit = maxLimit;
       if (!readList.includes(normFile)) {
         if (readList.length >= maxLimit) {
@@ -219,13 +257,15 @@ function decide() {
 
     if (!updated) return finish({ deny: true, reason: '【状态锁忙】读取配额暂时无法安全更新，请稍后重试本次工具调用。' });
 
+    if (auditSlice) return finish();
+
     if (shouldDenyQuota) {
       return finish({
         deny: true,
         reason:
           `【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 ${quotaLimit} 个不同文件（` +
           currentReads.map((p) => path.basename(p)).join(', ') +
-          '），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="flash") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。',
+          `），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="${researcher}") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。`,
       });
     }
   }
@@ -254,6 +294,8 @@ function decide() {
 
 try {
   output(decide());
-} catch {
-  output(ALLOW);
+} catch (error) {
+  output(process.env.PRO_HARNESS === 'codex' && currentMode() === 'enforce'
+    ? { decision: 'deny', reason: 'Codex guard failed safely: ' + String(error.message || error).slice(0,160) }
+    : ALLOW);
 }

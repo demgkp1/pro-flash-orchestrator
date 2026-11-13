@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * PreInvocation hook (v0.5.1) — turn-boundary wake-up + deduplicated drift detector.
+ * PreInvocation hook (v0.6.1) — turn-boundary wake-up + deduplicated drift detector.
  *
  * Key guarantees:
  *   1. Uses `globalStep` (transcript step_index / line count) and turn-reset
@@ -16,13 +16,16 @@
 import fs from 'node:fs';
 import {
   currentMode,
+  isNativeOrchestrator,
   isSubAgent,
   lastUserInput,
   logDecision,
   output,
   readPayload,
+  readCapabilities,
   readTail,
   setContext,
+  targetWorkerModel,
   updateSession,
 } from './lib.mjs';
 
@@ -39,8 +42,13 @@ setContext(payload);
 const mode = currentMode();
 const conversationId = payload.conversationId || 'unknown';
 const invocationNum = Number(payload.invocationNum || 0);
-const currentModel = String(payload.modelName || '').toLowerCase();
-const isCurrentModelFlash = currentModel.includes('flash');
+const { strategy } = readCapabilities(payload);
+const relaxed = strategy === 'flash-main-relaxed';
+const baseReads = relaxed ? 6 : 3;
+const writeLimit = relaxed ? 4 : 2;
+const researcher = targetWorkerModel(undefined, 'research', payload);
+const worker = targetWorkerModel(undefined, 'self', payload);
+const native = isNativeOrchestrator(payload);
 
 if (mode === 'off' || isSubAgent(payload)) {
   output({});
@@ -62,7 +70,7 @@ if (mode === 'off' || isSubAgent(payload)) {
   let transcriptWrites = 0;
   let globalStep = 0;
 
-  if (transcriptBytes > 0 && !isCurrentModelFlash) {
+  if (transcriptBytes > 0) {
     try {
       const tail = readTail(transcriptPath, TAIL_BYTES);
       const lines = tail.split(/\r?\n/).filter(Boolean).slice(-60);
@@ -150,14 +158,22 @@ if (mode === 'off' || isSubAgent(payload)) {
       Boolean(userInput && userInput !== state.lastUserInput) ||
       Boolean(invocationNum > 0 && invocationNum < Number(state.lastInvocationNum || 0));
     if (isNewUserTurn) {
+      const isAuditWakeup = state.phase === 'audit' && state.auditPendingWakeup === true;
       state.lastUserInput = userInput;
       state.lastUserTurnId = turnId;
       state.userTurnSequence = Number(state.userTurnSequence || 0) + 1;
       state.currentBatchSpawns = 0;
-      state.maxReadsAllowed = 3;
+      state.auditPendingWakeup = false;
+      if (!isAuditWakeup) {
+        state.maxReadsAllowed = baseReads;
+        state.phase = 'explore';
+        state.auditSliceQuota = 0;
+      }
       state.readsSinceDispatch = [];
       state.writesSinceDispatch = [];
     }
+    if (state.strategy !== strategy && state.phase !== 'audit') state.maxReadsAllowed = baseReads;
+    state.strategy = strategy;
     state.lastInvocationNum = invocationNum;
 
     // Prefer deduplicated, exempt-filtered file lists from guard-read-file / guard-write-file
@@ -173,19 +189,33 @@ if (mode === 'off' || isSubAgent(payload)) {
     const invReset = invocationNum > 0 && invocationNum < Number(state.lastNagInvocation || 0);
     const cooled = stepDelta >= NAG_STEP_COOLDOWN || invReset || isNewUserTurn;
 
-    if (!isCurrentModelFlash && isNewUserTurn && globalStep >= WAKEUP_MIN_STEPS && writes < 3) {
+    const audit = state.phase === 'audit' || Number(state.auditSliceQuota || 0) > 0;
+    if (audit && state.auditBatchId && state.auditReminderBatchId !== state.auditBatchId) {
+      const commands = Array.isArray(state.subagentCommands) ? state.subagentCommands : [];
+      const hasEvidence = commands.some((entry) => entry.auditBatchId === state.auditBatchId);
+      if (!hasEvidence) {
+        steps.push({ ephemeralMessage: '[Pro-Flash 终审提示] 本批子代理尚无命令放行记录，请核实四列表格中的自检命令与实际结果；放行记录本身也不能证明测试通过。终审可使用明确起止行号的 ≤80 行切片抽检。' });
+      }
+      state.auditReminderBatchId = state.auditBatchId;
+    }
+
+    if (!native && !audit && isNewUserTurn && globalStep >= WAKEUP_MIN_STEPS && writes <= writeLimit) {
       state.lastNagStep = globalStep;
       state.lastNagInvocation = invocationNum;
       steps.push({
         ephemeralMessage:
-          '[Pro-Flash 轮次唤醒] 凡需读≥3个文件请派 invoke_subagent(TypeName="research", Model="flash")；改≥2个文件或>50行请派 invoke_subagent(TypeName="self", Model="flash")。派单后静默等待通知。',
+          relaxed
+            ? `[Pro-Flash 轮次唤醒] Flash 主模型可读最多 6 个文件、直改最多 4 个文件；超出配额或复杂任务请派 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")。派单后等待通知。`
+            : `[Pro-Flash 轮次唤醒] 凡需读≥3个文件请派 invoke_subagent(TypeName="research", Model="${researcher}")；改≥2个文件或>50行请派 invoke_subagent(TypeName="self", Model="${worker}")。派单后静默等待通知。`,
       });
-    } else if (!isCurrentModelFlash && cooled && (writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
+    } else if (!native && !audit && cooled && (relaxed
+      ? writes > writeLimit || reads > baseReads
+      : writes >= 3 || reads >= 3 || (writes >= 2 && reads >= 2))) {
       /* ---------------------------------------------------- 2. mid-turn drift */
       state.lastNagStep = globalStep;
       state.lastNagInvocation = invocationNum;
       steps.push({
-        ephemeralMessage: `[Pro-Flash 漂移提醒] 已直读 ${reads} 个文件、改写 ${writes} 次文件。请立即派 invoke_subagent(TypeName="research"|"self", Model="flash") 协作，派单后静默等待通知。`,
+        ephemeralMessage: `[Pro-Flash 漂移提醒] 已直读 ${reads} 个文件、改写 ${writes} 次文件。请立即派 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}") 协作，派单后静默等待通知。`,
       });
     }
 

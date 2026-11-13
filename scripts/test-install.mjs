@@ -7,7 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { installRuntime } from './install.mjs';
 import { ROOT_DIR, runtimeEntries, validateRuntimePath } from './runtime-files.mjs';
-import { createReleaseZip, verifyZipLayout } from './package.mjs';
+import { createReleaseZip, verifyZipLayout, resolveTag } from './package.mjs';
 
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-install-test-'));
 const target = path.join(TMP, 'pro-flash-orchestrator');
@@ -16,6 +16,7 @@ fs.mkdirSync(stateDir, { recursive: true });
 const stateFiles = new Map([
   ['mode.json', '{"mode":"shadow"}\n'],
   ['decisions.jsonl', '{"custom":"keep this history"}\n'],
+  ['capabilities.json', '{"hasHydrogen":true,"source":"keep this local capability cache"}\n'],
   ['sessions/existing.json', '{"writesSinceDispatch":["keep.js"]}\n'],
 ]);
 for (const [file, content] of stateFiles) {
@@ -32,6 +33,11 @@ function test(name, fn) {
   catch (error) { failures.push(name); console.error(`FAIL ${name}: ${error.stack}`); }
 }
 try {
+  test('worktree release names use the working version instead of the previous HEAD tag', () => {
+    const version = JSON.parse(fs.readFileSync(path.join(ROOT_DIR, 'plugin.json'), 'utf8')).version;
+    assert.equal(resolveTag('', { worktree: true }), 'v' + version);
+    assert.equal(resolveTag('v9.9.9', { worktree: true }), 'v9.9.9');
+  });
   test('dry run validates the layout without creating plugin files', () => {
     const out = installRuntime(target, { dryRun: true });
     assert.equal(out.files, 15);
@@ -93,7 +99,7 @@ try {
     checkState();
   });
   test('runtime release excludes all maintenance files and includes cross-platform adapters', () => {
-    const result = createReleaseZip({ tag: 'v0.5.1', worktree: true, runtime: true, outFile: path.join(TMP, 'runtime.zip') });
+    const result = createReleaseZip({ tag: 'v0.6.1', worktree: true, runtime: true, outFile: path.join(TMP, 'runtime.zip') });
     const entries = verifyZipLayout(result.outFile, runtimeEntries().map((file) => file.to));
     assert(entries.includes('pro-flash-orchestrator/hooks/codex-hooks.json'));
     assert(entries.includes('pro-flash-orchestrator/hooks/claude-settings-hooks.json'));
@@ -103,7 +109,7 @@ try {
     checkState();
   });
   test('complete source archives remain available separately', () => {
-    const result = createReleaseZip({ tag: 'v0.5.1', worktree: true, runtime: false, outFile: path.join(TMP, 'source.zip') });
+    const result = createReleaseZip({ tag: 'v0.6.1', worktree: true, runtime: false, outFile: path.join(TMP, 'source.zip') });
     const entries = verifyZipLayout(result.outFile);
     assert(entries.includes('pro-flash-orchestrator/scripts/test-install.mjs'));
     assert(entries.includes('pro-flash-orchestrator/runtime-files.json'));

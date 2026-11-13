@@ -1,6 +1,12 @@
 #!/usr/bin/env node
+if(process.argv.includes('--platform') && process.argv[process.argv.indexOf('--platform')+1] === 'codex') {
+  const {doctorCodex}=await import('./codex-maintenance.mjs');
+  const result=await doctorCodex({verify:process.argv.includes('--verify-worker')});
+  console.log(JSON.stringify(result,null,2));
+  process.exit(process.argv.includes('--verify-worker') && result.status !== 'verified' ? 1 : 0);
+}
 /**
- * Pro-Flash Orchestrator v0.5.1 — doctor
+ * Pro-Flash Orchestrator v0.6.1 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -14,6 +20,23 @@ import { fileURLToPath } from 'node:url';
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const PLUGIN_DIR = path.dirname(SCRIPT_DIR);
+
+// Read the caller's cache in a separate process before isolating test state.
+// Importing lib here would cache its real STATE_DIR for the fixtures below.
+const hostEnv = { ...process.env };
+const hostProbeArgs = ['--input-type=module', '-e',
+  `const { readCapabilities, STATE_DIR } = await import(${JSON.stringify(new URL('./lib.mjs', import.meta.url).href)}); ` +
+  'console.log(JSON.stringify({ ...readCapabilities(), stateDir: STATE_DIR }));',
+];
+const probeHostCapabilities = () => spawnSync(process.execPath, hostProbeArgs,
+  { cwd: PLUGIN_DIR, env: hostEnv, encoding: 'utf8', timeout: 10000, windowsHide: true });
+const hostCapabilityProbe = probeHostCapabilities();
+let hostCapabilities = null;
+try {
+  if (!hostCapabilityProbe.error && hostCapabilityProbe.status === 0) {
+    hostCapabilities = JSON.parse(hostCapabilityProbe.stdout);
+  }
+} catch { /* Report the failed probe in the environment check. */ }
 
 function getDoctorTmpDir() {
   const preferred = path.join(os.tmpdir(), `pro-doctor-${process.pid}`);
@@ -34,7 +57,7 @@ const DOCTOR_STATE_DIR = path.join(TMP, 'state');
 fs.mkdirSync(DOCTOR_STATE_DIR, { recursive: true, mode: 0o700 });
 process.env.PRO_STATE_DIR = DOCTOR_STATE_DIR;
 
-const { isSubAgent, logDecision, STATE_DIR, ensureStateDir, isExemptPath } = await import('./lib.mjs');
+const { isSubAgent, logDecision, STATE_DIR, ensureStateDir, isExemptPath, readSession, writeSession } = await import('./lib.mjs');
 const { loadDecisions } = await import('./report.mjs');
 
 let passed = 0;
@@ -93,9 +116,47 @@ function basePayload(extra = {}) {
   };
 }
 
-console.log('\nPro-Flash Orchestrator v0.5.1 — doctor\n');
+function runReport(stateDir, rows, env = {}) {
+  fs.mkdirSync(stateDir, { recursive: true });
+  const ts = new Date().toISOString();
+  fs.writeFileSync(path.join(stateDir, 'decisions.jsonl'),
+    rows.map((row) => JSON.stringify({ ts, conv: 'report-fixture', ...row })).join('\n'), 'utf8');
+  const result = spawnSync(process.execPath, [path.join(SCRIPT_DIR, 'report.mjs')], {
+    cwd: PLUGIN_DIR, encoding: 'utf8', timeout: 15000, windowsHide: true,
+    env: { ...process.env, PRO_STATE_DIR: stateDir, ARGON_STATE_DIR: '', PLUGIN_DATA: '', PRO_HARNESS: 'antigravity', ...env },
+  });
+  assert(!result.error && result.status === 0, `report failed: ${result.error?.message || result.stderr}`);
+  return result.stdout;
+}
+
+const MUTEX_ENV = {
+  PRO_MODE: 'enforce', PRO_HARNESS: 'antigravity', PRO_TEST: '', ARGON_TEST: '',
+  PRO_NATIVE_ORCHESTRATOR: '', PRO_WORKER_MODEL: '', PRO_RESEARCH_MODEL: '', PRO_SELF_MODEL: '', PRO_HYDROGEN_ID: '',
+};
+const normFile = (file) => process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
+const claimsFor = (parentId) => readSession(parentId).batchFileClaims || {};
+function subWrite(convId, file, extra = {}, env = {}) {
+  return runHook('guard-write-file.mjs', basePayload({
+    conversationId: convId, toolCall: { name: 'write_file', args: { Path: file, Content: '// change\n' } }, ...extra,
+  }), { ...MUTEX_ENV, ...env });
+}
+function mutexDispatch(parentId, turnId, input, typeName = 'self') {
+  return runHook('guard-subagent.mjs', basePayload({
+    conversationId: parentId, turnId, lastUserInput: input,
+    toolCall: { name: 'invoke_subagent', args: { TypeName: typeName, Model: 'inherit', Prompt: '修改专属文件' } },
+  }), MUTEX_ENV);
+}
+
+console.log('\nPro-Flash Orchestrator v0.6.1 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
+check('诊断：能力快照来自隔离前的宿主环境', () => {
+  assert(hostCapabilities && typeof hostCapabilities.strategy === 'string' &&
+    typeof hostCapabilities.hasHydrogen === 'boolean' && typeof hostCapabilities.source === 'string',
+    `capability probe failed: ${hostCapabilityProbe.error?.message || hostCapabilityProbe.stderr || 'invalid snapshot'}`);
+  assert(path.resolve(hostCapabilities.stateDir) !== path.resolve(DOCTOR_STATE_DIR), 'capability snapshot used doctor fixture state');
+});
+
 check('hooks.json 可解析，且引用的脚本都存在', () => {
   const hooks = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'hooks.json'), 'utf8'));
   const commands = [];
@@ -723,6 +784,321 @@ check('决策复盘：report.mjs 能正确解析 decisions.1.jsonl 与归档日�
   assert(actions.has('slice') && actions.has('rewrite') && actions.has('deny'), 'missing expected actions from rotated/archived files');
 });
 
+check('决策复盘：轮询、并发、递归与直改拒绝使用准确标签', () => {
+  const text = runReport(path.join(TMP, 'report-labels'), [
+    { hook: 'guard-subagent', action: 'deny', subAction: 'list', reason: '并发期间禁止轮询' },
+    { hook: 'guard-subagent', action: 'deny', reason: '并发超限' },
+    { hook: 'guard-subagent', action: 'deny', tool: 'define_subagent', reason: '子代理递归' },
+    { hook: 'guard-subagent', action: 'deny', reason: '子代理递归' },
+    { hook: 'guard-write-file', action: 'deny', base: 'a.js' },
+    { hook: 'guard-write-file', action: 'deny', path: '/src/path-only.js' },
+    { hook: 'guard-write-file', action: 'deny' },
+  ]);
+  for (const label of ['轮询拦截 (manage_subagents:list)', '并发超限拦截 (invoke_subagent)',
+    '子代理递归拦截 (define_subagent)', '子代理递归拦截 (invoke_subagent)',
+    '直改超限: a.js', '直改超限: /src/path-only.js', '直改超限: ?']) {
+    assert(text.includes(label), `missing report label: ${label}`);
+  }
+  assert(!text.includes('(? 行)'), 'write or subagent denial reported an unknown line count');
+});
+
+check('决策复盘：按 session-start 汇总策略并剔除自检记录', () => {
+  const text = runReport(path.join(TMP, 'report-strategies'), [
+    { hook: 'session-start', action: 'inject', strategy: 'hydrogen-worker' },
+    { hook: 'session-start', action: 'inject', strategy: 'hydrogen-worker' },
+    { hook: 'session-start', action: 'inject', strategy: 'hydrogen-main' },
+    { hook: 'session-start', action: 'inject', strategy: 'flash-fallback' },
+    { hook: 'session-start', action: 'inject', strategy: 'flash-main-relaxed' },
+    { hook: 'session-start', action: 'inject', strategy: 'hydrogen-worker', test: true },
+    { hook: 'guard-read-file', action: 'pass', strategy: 'ignored-strategy' },
+  ]);
+  for (const [strategy, count] of [['hydrogen-worker', 2], ['hydrogen-main', 1], ['flash-fallback', 1], ['flash-main-relaxed', 1]]) {
+    assert(text.includes(`  ${strategy}: ${count}\n`), `incorrect strategy count for ${strategy}`);
+  }
+  assert(!text.includes('ignored-strategy'), 'non-startup strategy was counted');
+});
+
+check('决策复盘：真实拒绝与 150 行切片估算节省 10.0 KB / 2,560 Tokens', () => {
+  const text = runReport(path.join(TMP, 'report-roi'), [
+    { hook: 'guard-read-file', action: 'deny', bytes: 8192 },
+    { hook: 'guard-read-file', action: 'slice', bytes: 4096, lines: 300 },
+    { hook: 'guard-read-file', action: 'deny', bytes: 8192, test: true },
+    { hook: 'guard-command', action: 'deny', bytes: 8192 },
+    { hook: 'guard-read-file', action: 'would-deny', bytes: 8192 },
+    { hook: 'guard-read-file', action: 'would-slice', bytes: 4096, lines: 300 },
+    ...[0, -4096, 'invalid', null].map((bytes) => ({ hook: 'guard-read-file', action: 'deny', bytes })),
+    ...[150, 149, 'invalid', null].map((lines) => ({ hook: 'guard-read-file', action: 'slice', bytes: 4096, lines })),
+  ]);
+  assert(text.includes('预估节省主模型上下文：10.0 KB（约 2,560 Tokens，按 4 bytes/token 估算）'), 'incorrect savings estimate');
+});
+
+check('决策复盘：无生产记录时仍显示零省流面板', () => {
+  const text = runReport(path.join(TMP, 'report-empty'), [
+    { hook: 'guard-read-file', action: 'deny', bytes: 8192, test: true },
+  ]);
+  assert(text.includes('没有任何真实决策记录。') && text.includes('暂无启动策略记录。'), 'empty report omitted its panel');
+  assert(text.includes('0.0 KB（约 0 Tokens'), 'empty report did not show zero savings');
+});
+
+check('决策复盘：PRO_STATE_DIR 优先于 PLUGIN_DATA 与 Codex 默认目录', () => {
+  const text = runReport(path.join(TMP, 'report-pro-state'), [
+    { hook: 'guard-command', action: 'deny', command: 'pro-state-selected' },
+  ], { PLUGIN_DATA: path.join(TMP, 'unused-plugin-data'), PRO_HARNESS: 'codex', CODEX_HOME: path.join(TMP, 'unused-codex-home') });
+  assert(text.includes('pro-state-selected'), 'report ignored PRO_STATE_DIR');
+});
+
+check('决策复盘：PLUGIN_DATA 覆盖 Codex 默认状态目录', () => {
+  const stateDir = path.join(TMP, 'report-plugin-data');
+  const text = runReport(stateDir, [{ hook: 'guard-command', action: 'deny', command: 'plugin-data-selected' }], {
+    PRO_STATE_DIR: '', PLUGIN_DATA: stateDir, PRO_HARNESS: 'codex', CODEX_HOME: path.join(TMP, 'unused-codex-home'),
+  });
+  assert(text.includes('plugin-data-selected'), 'report ignored PLUGIN_DATA');
+});
+
+check('决策复盘：Codex 默认从 CODEX_HOME/plugin-data 读取生产日志', () => {
+  const codexHome = path.join(TMP, 'report-codex-home');
+  const text = runReport(path.join(codexHome, 'plugin-data', 'pro-flash-orchestrator'), [
+    { hook: 'guard-command', action: 'deny', command: 'codex-state-selected' },
+  ], { PRO_STATE_DIR: '', PLUGIN_DATA: '', PRO_HARNESS: 'codex', CODEX_HOME: codexHome });
+  assert(text.includes('codex-state-selected'), 'report did not use the Codex state directory');
+});
+
+/* ---------------------------------------------------------- batch file mutex */
+check('子代理互斥：同批次第二个子代理修改同一文件被拦截', () => {
+  const parentId = 'pfo-mutex-conflict-parent';
+  const owner = 'pfo-mutex-conflict-owner';
+  const file = path.join(TMP, 'MutexShared.js');
+  assert(subWrite(owner, file, { parentConversationId: parentId }).decision === 'allow', 'first owner was denied');
+  const alias = process.platform === 'win32' ? file.toLowerCase() : file;
+  const denied = subWrite('pfo-mutex-conflict-other', alias, { parentConversationId: parentId });
+  const expected = '【并发互斥守门】文件 ' + path.basename(normFile(file)) +
+    ' 已被同批次并行子代理 (' + owner.slice(0, 8) +
+    ') 锁定修改。严禁多代理交叉修改同一文件！请勿修改该文件，将所需变更写入最终四列表格交由主控模型统一合并。';
+  assert(denied.decision === 'deny' && denied.reason === expected, 'incorrect file mutex denial');
+  assert(claimsFor(parentId)[normFile(file)] === owner, 'conflict overwrote the original owner');
+});
+
+check('子代理互斥：同一个子代理重复修改自己的文件放行', () => {
+  const parentId = 'pfo-mutex-retry-parent';
+  const convId = 'pfo-mutex-retry-child';
+  const file = path.join(TMP, 'mutex-retry.js');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    assert(subWrite(convId, file, { parentConversationId: parentId }).decision === 'allow', 'same-owner retry was denied');
+  }
+  assert(Object.keys(claimsFor(parentId)).length === 1, 'retry created duplicate claims');
+});
+
+check('子代理互斥：同批次子代理修改不同文件放行', () => {
+  const parentId = 'pfo-mutex-disjoint-parent';
+  const fileA = path.join(TMP, 'mutex-disjoint-a.js');
+  const fileB = path.join(TMP, 'mutex-disjoint-b.js');
+  assert(subWrite('pfo-mutex-disjoint-a', fileA, { parentConversationId: parentId }).decision === 'allow', 'file A denied');
+  assert(subWrite('pfo-mutex-disjoint-b', fileB, { parentConversationId: parentId }).decision === 'allow', 'file B denied');
+  const claims = claimsFor(parentId);
+  assert(claims[normFile(fileA)] === 'pfo-mutex-disjoint-a' && claims[normFile(fileB)] === 'pfo-mutex-disjoint-b', 'disjoint claims lost');
+});
+
+check('子代理互斥：不同父会话的认领相互隔离', () => {
+  const file = path.join(TMP, 'mutex-parent-isolation.js');
+  for (const suffix of ['a', 'b']) {
+    const childId = 'pfo-mutex-isolated-child-' + suffix;
+    const parentId = 'pfo-mutex-isolated-parent-' + suffix;
+    assert(subWrite(childId, file, { parentConversationId: parentId }).decision === 'allow', 'independent parent was denied');
+    assert(claimsFor(parentId)[normFile(file)] === childId, 'claim reached the wrong parent');
+  }
+});
+
+check('子代理互斥：callerContext 中的父会话关联生效', () => {
+  const parentId = 'pfo-mutex-caller-parent';
+  const childId = 'pfo-mutex-caller-child';
+  const file = path.join(TMP, 'mutex-caller.js');
+  assert(subWrite(childId, file, { callerContext: { parentConversationId: parentId } }).decision === 'allow', 'caller-context write denied');
+  assert(claimsFor(parentId)[normFile(file)] === childId, 'caller-context parent was not used');
+});
+
+check('子代理互斥：子 Session 已缓存的父会话关联生效', () => {
+  const parentId = 'pfo-mutex-cached-parent';
+  const childId = 'pfo-mutex-cached-child';
+  const file = path.join(TMP, 'mutex-cached.js');
+  writeSession(childId, { isSubAgent: true, subagentEvidence: 'transcript', parentConversationId: parentId });
+  assert(subWrite(childId, file).decision === 'allow', 'cached-parent write denied');
+  assert(claimsFor(parentId)[normFile(file)] === childId, 'cached child parent was not used');
+});
+
+check('子代理互斥：transcript 推断的父会话即时参与文件认领', () => {
+  const parentId = 'pfo:mutex-parent.sender';
+  const childId = 'pfo-mutex-transcript-child';
+  const file = path.join(TMP, 'mutex-transcript.js');
+  const transcriptPath = path.join(TMP, 'mutex-transcript.jsonl');
+  fs.writeFileSync(transcriptPath, JSON.stringify({
+    source: 'SYSTEM', type: 'USER_INPUT',
+    content: '<SYSTEM_MESSAGE>\n[Message] sender=' + parentId + ' content=[FLASH-WORKER] 修改专属文件\n</SYSTEM_MESSAGE>',
+  }) + '\n', 'utf8');
+  assert(subWrite(childId, file, { transcriptPath }).decision === 'allow', 'inferred-parent write denied');
+  assert(readSession(childId).parentConversationId === parentId, 'inferred parent was not persisted');
+  assert(claimsFor(parentId)[normFile(file)] === childId, 'newly persisted parent did not receive the claim');
+});
+
+check('子代理互斥：多文件补丁冲突时不留下部分认领', () => {
+  const parentId = 'pfo-mutex-patch-parent';
+  const locked = path.join(TMP, 'mutex-patch-locked.js');
+  const freeA = path.join(TMP, 'mutex-patch-free-a.js');
+  const freeB = path.join(TMP, 'mutex-patch-free-b.js');
+  assert(subWrite('pfo-mutex-patch-owner', locked, { parentConversationId: parentId }).decision === 'allow', 'owner denied');
+  const patch = ['*** Begin Patch', '*** Add File: ' + freeA, '+// change',
+    '*** Update File: ' + locked, '@@', '-// old', '+// new',
+    '*** Add File: ' + freeB, '+// change', '*** End Patch'].join('\n');
+  const out = runHook('guard-write-file.mjs', {
+    hook_event_name: 'PreToolUse', session_id: parentId, conversationId: 'pfo-mutex-patch-other',
+    parentConversationId: parentId, cwd: TMP, model: 'gpt-5',
+    tool_name: 'apply_patch', tool_input: { patch },
+  }, { ...MUTEX_ENV, PRO_HARNESS: 'codex' });
+  assert(out.hookSpecificOutput?.permissionDecision === 'deny', 'conflicting patch was allowed');
+  const claims = claimsFor(parentId);
+  assert(Object.keys(claims).length === 1 && claims[normFile(locked)] === 'pfo-mutex-patch-owner', 'conflicting patch changed claims');
+  assert(!claims[normFile(freeA)] && !claims[normFile(freeB)], 'rejected patch left partial claims');
+});
+
+check('子代理互斥：多文件补丁全部无冲突时一次认领全部目标', () => {
+  const parentId = 'pfo-mutex-patch-allow-parent';
+  const childId = 'pfo-mutex-patch-allow-child';
+  const files = ['a', 'b', 'c'].map((suffix) => path.join(TMP, 'mutex-patch-allow-' + suffix + '.js'));
+  const patch = ['*** Begin Patch', ...files.flatMap((file) => ['*** Add File: ' + file, '+// change']), '*** End Patch'].join('\n');
+  const out = runHook('guard-write-file.mjs', {
+    hook_event_name: 'PreToolUse', session_id: parentId, conversationId: childId,
+    parentConversationId: parentId, cwd: TMP, model: 'gpt-5',
+    tool_name: 'apply_patch', tool_input: { patch },
+  }, { ...MUTEX_ENV, PRO_HARNESS: 'codex' });
+  assert(!out.hookSpecificOutput, 'disjoint multi-file child patch was denied');
+  assert(files.every((file) => claimsFor(parentId)[normFile(file)] === childId), 'allowed patch missed a target claim');
+});
+
+check('子代理互斥：Artifact 豁免且不占用源码认领', () => {
+  const parentId = 'pfo-mutex-artifact-parent';
+  const file = path.join(TMP, 'artifacts', 'shared.report.md');
+  for (const suffix of ['a', 'b']) {
+    assert(subWrite('pfo-mutex-artifact-' + suffix, file, { parentConversationId: parentId }).decision === 'allow', 'artifact was locked');
+  }
+  assert(Object.keys(claimsFor(parentId)).length === 0, 'artifact created a source claim');
+});
+
+check('子代理互斥：原生编排与用户直改豁免不覆盖子代理冲突', () => {
+  const parentId = 'pfo-mutex-native-parent';
+  const file = path.join(TMP, 'mutex-native.js');
+  assert(subWrite('pfo-mutex-native-owner', file, { parentConversationId: parentId }).decision === 'allow', 'owner denied');
+  const out = subWrite('pfo-mutex-native-other', file, {
+    parentConversationId: parentId, modelName: 'Orchestrator (Argon)', lastUserInput: '[FORCE-PRO] [ALLOW-WRITE] 修改文件',
+  });
+  assert(out.decision === 'deny' && out.reason.includes('并发互斥守门'), 'main-model exemption bypassed child ownership');
+});
+
+check('子代理互斥：父 Session 锁忙时拒绝未受保护的写入', () => {
+  const parentId = 'pfo-mutex-busy-parent';
+  writeSession(parentId, {});
+  const lockFile = path.join(DOCTOR_STATE_DIR, 'sessions', parentId + '.lock');
+  fs.writeFileSync(lockFile, JSON.stringify({ pid: process.pid, token: 'doctor-mutex-owner' }), 'utf8');
+  try {
+    const out = subWrite('pfo-mutex-busy-child', path.join(TMP, 'mutex-busy.js'), { parentConversationId: parentId });
+    assert(out.decision === 'deny' && out.reason.includes('状态锁忙'), 'busy parent lock allowed an unprotected write');
+    assert(Object.keys(claimsFor(parentId)).length === 0, 'busy lock left a claim');
+  } finally { fs.unlinkSync(lockFile); }
+});
+
+check('子代理互斥：shadow 记录冲突且保留原认领', () => {
+  const parentId = 'pfo-mutex-shadow-parent';
+  const owner = 'pfo-mutex-shadow-owner';
+  const file = path.join(TMP, 'mutex-shadow.js');
+  assert(subWrite(owner, file, { parentConversationId: parentId }).decision === 'allow', 'owner denied');
+  assert(subWrite('pfo-mutex-shadow-other', file, { parentConversationId: parentId }, { PRO_MODE: 'shadow' }).decision === 'allow', 'shadow changed behavior');
+  assert(claimsFor(parentId)[normFile(file)] === owner, 'shadow conflict changed the owner');
+  const rows = fs.readFileSync(path.join(DOCTOR_STATE_DIR, 'decisions.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert(rows.some((row) => row.path === file && row.action === 'would-deny' && row.reason?.includes('并发互斥守门')), 'shadow conflict was not logged');
+});
+
+check('子代理互斥：新 self 批次清空认领并释放旧文件', () => {
+  const parentId = 'pfo-mutex-new-batch-parent';
+  const file = path.join(TMP, 'mutex-new-batch.js');
+  writeSession(parentId, { phase: 'audit', auditBatchId: 'old-batch', spawnTurnKey: 'old-turn',
+    lastSpawnUserInput: 'old request', currentBatchSpawns: 1 });
+  assert(subWrite('pfo-mutex-new-batch-owner', file, { parentConversationId: parentId }).decision === 'allow', 'owner denied');
+  assert(subWrite('pfo-mutex-new-batch-other', file, { parentConversationId: parentId }).decision === 'deny', 'old batch did not block conflict');
+  assert(mutexDispatch(parentId, 'new-turn', 'new request').decision === 'allow', 'new dispatch denied');
+  assert(Object.keys(claimsFor(parentId)).length === 0 && readSession(parentId).auditBatchId !== 'old-batch', 'new batch retained old claims');
+  assert(subWrite('pfo-mutex-new-batch-other', file, { parentConversationId: parentId }).decision === 'allow', 'new batch did not release the file');
+});
+
+check('子代理互斥：同批次 self 续派保留认领和 auditBatchId', () => {
+  const parentId = 'pfo-mutex-same-batch-parent';
+  const file = path.join(TMP, 'mutex-same-batch.js');
+  writeSession(parentId, { phase: 'audit', auditBatchId: 'same-batch', spawnTurnKey: 'same-turn',
+    lastSpawnUserInput: 'same request', currentBatchSpawns: 1, batchFileClaims: { [normFile(file)]: 'owner' } });
+  assert(mutexDispatch(parentId, 'same-turn', 'same request').decision === 'allow', 'same-batch dispatch denied');
+  assert(claimsFor(parentId)[normFile(file)] === 'owner' && readSession(parentId).auditBatchId === 'same-batch', 'same-batch dispatch reset claims');
+});
+
+check('子代理互斥：生成新 auditBatchId 时清空旧认领', () => {
+  const parentId = 'pfo-mutex-new-audit-parent';
+  const file = path.join(TMP, 'mutex-new-audit.js');
+  writeSession(parentId, { phase: 'explore', spawnTurnKey: 'same-turn', lastSpawnUserInput: 'same request',
+    currentBatchSpawns: 1, batchFileClaims: { [normFile(file)]: 'old-owner' } });
+  assert(mutexDispatch(parentId, 'same-turn', 'same request').decision === 'allow', 'new audit dispatch denied');
+  assert(readSession(parentId).auditBatchId && Object.keys(claimsFor(parentId)).length === 0, 'new audit ID retained old claims');
+});
+
+check('子代理互斥：research 新批次也清空旧认领', () => {
+  const parentId = 'pfo-mutex-research-batch-parent';
+  const file = path.join(TMP, 'mutex-research-batch.js');
+  writeSession(parentId, { phase: 'audit', auditBatchId: 'old-batch', spawnTurnKey: 'old-turn',
+    lastSpawnUserInput: 'old request', currentBatchSpawns: 1, batchFileClaims: { [normFile(file)]: 'old-owner' } });
+  assert(mutexDispatch(parentId, 'new-turn', 'new request', 'research').decision === 'allow', 'research dispatch denied');
+  assert(Object.keys(claimsFor(parentId)).length === 0 && readSession(parentId).phase === 'explore', 'research new batch retained old claims');
+});
+
+check('子代理互斥：并发超限拒绝的派单保留原认领', () => {
+  const parentId = 'pfo-mutex-sixth-parent';
+  const file = path.join(TMP, 'mutex-sixth.js');
+  writeSession(parentId, { phase: 'audit', auditBatchId: 'full-batch', spawnTurnKey: 'same-turn',
+    lastSpawnUserInput: 'same request', currentBatchSpawns: 5, batchFileClaims: { [normFile(file)]: 'owner' } });
+  const out = mutexDispatch(parentId, 'same-turn', 'same request');
+  assert(out.decision === 'deny' && out.reason.includes('并发'), 'sixth spawn was not denied');
+  const state = readSession(parentId);
+  assert(state.currentBatchSpawns === 5 && state.auditBatchId === 'full-batch' && claimsFor(parentId)[normFile(file)] === 'owner', 'denied spawn reset batch ownership');
+});
+
+check('子代理互斥：两个真实并发进程对同一文件只能有一个认领成功', () => {
+  const parentId = 'pfo-mutex-race-parent';
+  const file = path.join(TMP, 'mutex-race.js');
+  const payloads = ['a', 'b'].map((suffix) => basePayload({
+    conversationId: 'pfo-mutex-race-' + suffix, parentConversationId: parentId,
+    toolCall: { name: 'write_file', args: { Path: file, Content: '// change\n' } },
+  }));
+  const program = [
+    "import { spawn } from 'node:child_process';",
+    'const payloads = ' + JSON.stringify(payloads) + ';',
+    'const hook = ' + JSON.stringify(path.join(SCRIPT_DIR, 'guard-write-file.mjs')) + ';',
+    'const outputs = await Promise.all(payloads.map(payload => new Promise((resolve, reject) => {',
+    "  const child = spawn(process.execPath, [hook], { env: process.env, windowsHide: true, stdio: ['pipe','pipe','pipe'] });",
+    "  let stdout = '', stderr = '';",
+    "  child.stdout.on('data', chunk => { stdout += chunk; });",
+    "  child.stderr.on('data', chunk => { stderr += chunk; });",
+    "  child.once('error', reject);",
+    "  child.once('close', code => { try { if (code !== 0) throw new Error(stderr); resolve(JSON.parse(stdout)); } catch (error) { reject(error); } });",
+    '  child.stdin.end(JSON.stringify(payload));',
+    '})));',
+    'console.log(JSON.stringify(outputs));',
+  ].join('\n');
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', program], {
+    cwd: PLUGIN_DIR, encoding: 'utf8', timeout: 15000, windowsHide: true,
+    env: { ...process.env, ...MUTEX_ENV, PRO_STATE_DIR: DOCTOR_STATE_DIR },
+  });
+  assert(!result.error && result.status === 0, 'concurrent fixture failed: ' + (result.error?.message || result.stderr));
+  const outputs = JSON.parse(result.stdout);
+  assert(outputs.filter((out) => out.decision === 'allow').length === 1 &&
+    outputs.filter((out) => out.decision === 'deny').length === 1, 'concurrent writes both passed or both failed');
+  const winner = payloads[outputs.findIndex((out) => out.decision === 'allow')].conversationId;
+  assert(claimsFor(parentId)[normFile(file)] === winner && Object.keys(claimsFor(parentId)).length === 1, 'race lost or overwrote the winning claim');
+});
+
 /* ------------------------------------------------------------ v0.4.0 additions */
 check('派单守门：主代理调用 manage_subagents(Action="list") 轮询被拦截，Action="kill" 放行', () => {
   const payloadList = basePayload({
@@ -1204,7 +1580,11 @@ console.log(`\n结果：${passed} 通过，${failures.length} 失败`);
 if (failures.length > 0) {
   console.log('\n失败明细：');
   for (const failure of failures) console.log(` - ${failure}`);
-  process.exit(1);
+} else {
+  console.log('提示：确认 `read_file` 的 StartLine/EndLine 切片已在 Antigravity 平台验证支持。');
 }
-console.log('提示：确认 `read_file` 的 StartLine/EndLine 切片已在 Antigravity 平台验证支持。\n');
-process.exit(0);
+const finalCapabilityProbe = probeHostCapabilities();
+try { hostCapabilities = finalCapabilityProbe.status === 0 ? JSON.parse(finalCapabilityProbe.stdout) : null; }
+catch { hostCapabilities = null; }
+console.log(`当前宿主能力快照：strategy=${hostCapabilities?.strategy ?? 'unavailable'}，hasHydrogen=${hostCapabilities?.hasHydrogen ?? 'unavailable'}，source=${hostCapabilities?.source ?? 'unavailable'}`);
+process.exit(failures.length > 0 ? 1 : 0);

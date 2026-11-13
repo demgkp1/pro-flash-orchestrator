@@ -13,11 +13,14 @@ import {
   getArgs,
   isSubAgent,
   logDecision,
+  maskSecrets,
   output,
   readPayload,
+  readSession,
   resolvePath,
   setContext,
   toolName,
+  updateSession,
 } from './lib.mjs';
 import fs from 'node:fs';
 
@@ -390,7 +393,35 @@ function decide() {
     );
   }
 
-  if (isSubAgent(payload)) return ALLOW;
+  if (isSubAgent(payload)) {
+    const convId = String(payload.conversationId || 'unknown');
+    // Role detection may just have recovered a parent from the transcript or
+    // spawn pool. Read the child session afterwards to use that saved link.
+    const child = readSession(convId);
+    const explicitParent = payload.parentConversationId || payload.callerContext?.parentConversationId;
+    const parentId = String(explicitParent || child.parentConversationId || '');
+    const parent = parentId && parentId !== convId ? readSession(parentId) : null;
+    const entry = {
+      command: maskSecrets(command).slice(0, 300),
+      ts: Date.now(),
+      conversationId: convId,
+      // PreToolUse proves admission, not execution success or an exit status.
+      status: 'allowed',
+      ...(child.auditBatchId || parent?.auditBatchId ? { auditBatchId: child.auditBatchId || parent.auditBatchId } : {}),
+    };
+    const recordCommand = (state) => {
+      state.subagentCommands = [...(Array.isArray(state.subagentCommands) ? state.subagentCommands : []), entry].slice(-10);
+    };
+    const recorded = updateSession(convId, (state) => {
+      if (entry.auditBatchId && !state.auditBatchId) state.auditBatchId = entry.auditBatchId;
+      recordCommand(state);
+    });
+    const parentRecorded = parent ? updateSession(parentId, recordCommand) : true;
+    logDecision({ hook: 'guard-command', tool, mode, sub: true,
+      action: recorded && parentRecorded ? 'pass' : 'command-record-failed', command: entry.command,
+      recorded: Boolean(recorded && parentRecorded) });
+    return ALLOW;
+  }
 
   for (const pipe of pipelines) {
     const effPipe = unwrapCommand(pipe);
@@ -442,6 +473,8 @@ function decide() {
 
 try {
   output(decide());
-} catch {
-  output(ALLOW);
+} catch (error) {
+  output(process.env.PRO_HARNESS === 'codex' && currentMode() === 'enforce'
+    ? { decision: 'deny', reason: 'Codex guard failed safely: ' + String(error.message || error).slice(0,160) }
+    : ALLOW);
 }

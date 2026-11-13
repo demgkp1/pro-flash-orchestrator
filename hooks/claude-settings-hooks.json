@@ -24,7 +24,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Task|Agent|spawn_agent|invoke_subagent|send_message|manage_subagents",
+        "matcher": "invoke_subagent|define_subagent|send_message|manage_subagents|Task|Agent|spawn_agent",
         "hooks": [
           {
             "type": "command",
@@ -34,7 +34,7 @@
         ]
       },
       {
-        "matcher": "Write|Edit|MultiEdit|apply_patch|write_file|edit_file",
+        "matcher": "write_file|write_to_file|edit_file|replace_file_content|multi_replace_file_content|Write|Edit|MultiEdit|apply_patch",
         "hooks": [
           {
             "type": "command",
@@ -44,7 +44,7 @@
         ]
       },
       {
-        "matcher": "Read|read_file|view_file",
+        "matcher": "read_file|view_file|view_content_chunk|Read",
         "hooks": [
           {
             "type": "command",
@@ -54,7 +54,7 @@
         ]
       },
       {
-        "matcher": "Bash|shell|exec_command|run_command",
+        "matcher": "run_command|Bash|shell|exec_command",
         "hooks": [
           {
             "type": "command",

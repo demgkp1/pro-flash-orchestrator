@@ -67,11 +67,21 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   let target = path.join(os.homedir(), '.gemini', 'config', 'plugins', 'pro-flash-orchestrator');
   let platform = 'antigravity';
   let dryRun = false;
+  let explicitTarget=false, uninstall=false, register=true;
   for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === '--target') { if (!args[i + 1]) throw new Error('--target requires a path'); target = args[++i]; }
+    if (args[i] === '--target') { if (!args[i + 1]) throw new Error('--target requires a path'); target = args[++i]; explicitTarget=true; }
     else if (args[i] === '--platform') { if (!args[i + 1]) throw new Error('--platform requires a name'); platform = args[++i]; }
     else if (args[i] === '--dry-run') dryRun = true;
+    else if (args[i] === '--uninstall') uninstall=true;
+    else if (args[i] === '--no-register') register=false;
     else throw new Error(`Unknown argument: ${args[i]}`);
   }
-  console.log(JSON.stringify(installRuntime(target, { platform, dryRun }), null, 2));
+  if(platform === 'codex') {
+    const {installCodex,uninstallCodex,MARKETPLACE_DIR}=await import('./codex-maintenance.mjs');
+    if(!explicitTarget)target=MARKETPLACE_DIR;
+    console.log(JSON.stringify(uninstall ? await uninstallCodex({target,dryRun}) : await installCodex({target,dryRun,register}),null,2));
+  } else {
+    if(uninstall || !register)throw new Error('These flags apply only to Codex');
+    console.log(JSON.stringify(installRuntime(target, { platform, dryRun }), null, 2));
+  }
 }

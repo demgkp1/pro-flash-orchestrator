@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Reproductions of the seven audit defects, with isolated runtime state. */
+/** Reproductions of audited defects, with isolated runtime state. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -27,13 +27,17 @@ const big = path.join(WORKSPACE, 'big.log');
 fs.writeFileSync(small, '// small\n');
 fs.writeFileSync(big, 'x\n'.repeat(300000));
 const stateDir = (name) => path.join(TMP, 'states', name);
-const sessionFile = (name, conv) => path.join(stateDir(name), 'sessions', `${conv}.json`);
+const sessionFile = (name, conv) => path.join(stateDir(name), 'sessions', `${conv.replace(/[^a-zA-Z0-9._-]/g, '_')}.json`);
 function seed(name, conv, data) {
   const file = sessionFile(name, conv);
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, JSON.stringify(data));
 }
 function state(name, conv) { return JSON.parse(fs.readFileSync(sessionFile(name, conv), 'utf8')); }
+function seedSpawns(name, spawns) {
+  fs.mkdirSync(stateDir(name), { recursive: true });
+  fs.writeFileSync(path.join(stateDir(name), 'last_spawn.json'), JSON.stringify({ spawns, pendingCount: spawns.filter((s) => s && !s.claimedBy).length }));
+}
 function hook(script, payload, name, env = {}) {
   const result = spawnSync(process.execPath, [path.join(ROOT, 'scripts', script)], {
     cwd: ROOT, input: JSON.stringify(payload), encoding: 'utf8', timeout: 10000,
@@ -87,6 +91,225 @@ try {
     assert.equal(checkAndClaimSubagent('parent-1', 'parent-1'), null);
     assert.equal(checkAndClaimSubagent('worker', 'parent-1')?.parent, 'parent-1');
   });
+  await test('spawn retention and explicit claims share the ten-minute parent recovery window', () => {
+    const pool = JSON.parse(fs.readFileSync(SPAWN_FILE, 'utf8'));
+    pool.spawns.push({ parent: 'older-parent', ts: Date.now() - 5 * 60 * 1000, claimedBy: null },
+      { parent: 'expired-parent', ts: Date.now() - 10 * 60 * 1000, claimedBy: null });
+    fs.writeFileSync(SPAWN_FILE, JSON.stringify(pool));
+    assert.equal(markSubagentSpawn('new-parent'), true);
+    const retained = JSON.parse(fs.readFileSync(SPAWN_FILE, 'utf8')).spawns;
+    assert(retained.some((s) => s.parent === 'older-parent'));
+    assert(!retained.some((s) => s.parent === 'expired-parent'));
+    assert.equal(checkAndClaimSubagent('older-child', 'older-parent')?.parent, 'older-parent');
+  });
+  await test('transcript-only sender persists the parent and mirrors masked commands into its audit batch', () => {
+    const name = 'transcript-parent';
+    const parent = 'parent.alpha_42:task-3';
+    const child = 'transcript-child';
+    const file = path.join(TMP, 'sender-child.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ source: 'SYSTEM_SDK', content: 'startup' }) + '\n' +
+      JSON.stringify({ source: 'SYSTEM', content: `<SYSTEM_MESSAGE>[Message] sender=${parent} priority=high work</SYSTEM_MESSAGE>` }) + '\n');
+    seed(name, parent, { auditBatchId: 'sender-batch', subagentCommands: [] });
+    seed(name, 'unrelated-parent', { subagentCommands: [] });
+    seedSpawns(name, [{ parent: 'unrelated-parent', ts: Date.now(), claimedBy: null }]);
+    const payload = base(child, { transcriptPath: file,
+      toolCall: { name: 'run_command', args: { CommandLine: 'node check.js token=hidden api_key="quoted secret"' } } });
+    assert.equal(decision(hook('guard-command.mjs', payload, name)), 'allow');
+    assert.equal(state(name, child).parentConversationId, parent);
+    assert.equal(state(name, child).subagentEvidence, 'transcript');
+    const entry = state(name, parent).subagentCommands[0];
+    assert.equal(entry.conversationId, child); assert.equal(entry.auditBatchId, 'sender-batch');
+    assert.equal(entry.status, 'allowed'); assert.equal(typeof entry.ts, 'number');
+    assert(!entry.command.includes('hidden')); assert(!entry.command.includes('quoted secret'));
+    assert.equal(state(name, 'unrelated-parent').subagentCommands.length, 0);
+    // Later followups have neither sender metadata nor the original contract.
+    assert.equal(decision(hook('guard-command.mjs', { ...payload, transcriptPath: '', lastUserInput: 'continue: sender=unrelated-parent is a code example',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node second-check.js' } } }, name)), 'allow');
+    assert.equal(state(name, parent).subagentCommands.length, 2);
+    assert.equal(state(name, child).parentConversationId, parent);
+    assert.equal(state(name, 'unrelated-parent').subagentCommands.length, 0);
+    const denied = { ...payload, toolCall: { name: 'run_command', args: {
+      CommandLine: `Set-Content "${path.join(stateDir(name), 'mode.json')}" '{}'`,
+    } } };
+    assert.equal(decision(hook('guard-command.mjs', denied, name)), 'deny');
+    assert.equal(state(name, parent).subagentCommands.length, 2);
+  });
+  await test('cold system, prefixed and appended contracts all preserve sender parent IDs', () => {
+    const inputs = [
+      '<SYSTEM_MESSAGE>\n[Message] sender=input-parent work\n</SYSTEM_MESSAGE>',
+      '[FLASH-WORKER] sender=input-parent work',
+      '[PRO-CONTRACT] sender=input-parent work',
+      'bounded work\n\n[PRO-CONTRACT] 完成后仅回复四列表格 sender=input-parent',
+    ];
+    for (const [i, lastUserInput] of inputs.entries()) {
+      const name = 'input-parent-' + i;
+      seed(name, 'input-parent', { auditBatchId: 'input-batch', subagentCommands: [] });
+      const child = 'input-child-' + i;
+      const payload = base(child, { transcriptPath: path.join(TMP, 'missing-child.jsonl'), lastUserInput,
+        toolCall: { name: 'run_command', args: { CommandLine: 'node --test local.mjs' } } });
+      assert.equal(decision(hook('guard-command.mjs', payload, name)), 'allow');
+      assert.equal(state(name, child).parentConversationId, 'input-parent');
+      assert.equal(state(name, child).subagentEvidence, 'contract');
+      assert.equal(state(name, 'input-parent').subagentCommands[0].conversationId, child);
+    }
+  });
+  await test('contract-only child recovers an unambiguous unclaimed parent within ten minutes', () => {
+    const name = 'spawn-parent';
+    seed(name, 'older-parent', { subagentCommands: [] });
+    seed(name, 'recent-parent', { auditBatchId: 'spawn-batch', subagentCommands: [] });
+    seedSpawns(name, [
+      { parent: 'older-parent', ts: Date.now() - 11 * 60 * 1000, claimedBy: null },
+      { parent: 'recent-parent', ts: Date.now() - 5 * 60 * 1000, claimedBy: null },
+      { parent: 'other-child-parent', ts: Date.now(), claimedBy: 'another-child' },
+    ]);
+    const child = 'spawn-child';
+    const payload = base(child, { transcriptPath: '', lastUserInput: '[PRO-CONTRACT] bounded work',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node --test local.mjs' } } });
+    hook('guard-command.mjs', payload, name);
+    assert.equal(state(name, child).parentConversationId, 'recent-parent');
+    assert.equal(state(name, 'recent-parent').subagentCommands[0].auditBatchId, 'spawn-batch');
+    assert.equal(state(name, 'older-parent').subagentCommands.length, 0);
+    const pool = JSON.parse(fs.readFileSync(path.join(stateDir(name), 'last_spawn.json'), 'utf8'));
+    assert.equal(pool.spawns.find((s) => s.parent === 'recent-parent').claimedBy, child);
+    assert.equal(pool.pendingCount, 0);
+  });
+  await test('ambiguous parents cannot claim an unlinked child or bypass the file mutex', () => {
+    const name = 'ambiguous-parent';
+    seed(name, 'parent-a', { subagentCommands: [] });
+    seed(name, 'parent-b', { subagentCommands: [] });
+    seedSpawns(name, [{ parent: 'parent-a', ts: Date.now() - 1000, claimedBy: null },
+      { parent: 'parent-b', ts: Date.now(), claimedBy: null }]);
+    const payload = base('unlinked-child', { transcriptPath: '', lastUserInput: '[FLASH-WORKER] implement file',
+      toolCall: { name: 'edit_file', args: { Path: small } } });
+    assert.equal(decision(hook('guard-write-file.mjs', payload, name)), 'deny');
+    assert.equal(state(name, 'unlinked-child').parentConversationId, undefined);
+    const pool = JSON.parse(fs.readFileSync(path.join(stateDir(name), 'last_spawn.json'), 'utf8'));
+    assert.equal(pool.pendingCount, 2);
+    assert(pool.spawns.every((s) => !s.claimedBy));
+  });
+  await test('generated parent contract links concurrent parents without confusing source-code sender text', () => {
+    const name = 'parent-contract';
+    const a = hook('guard-subagent.mjs', dispatch('contract-a'), name).overwrite.Prompt;
+    hook('guard-subagent.mjs', dispatch('contract-b'), name);
+    assert(a.includes('[PRO-PARENT:contract-a]'));
+    const payload = base('linked-child', { transcriptPath: '', lastUserInput: a + '\nsender=contract-b is a code example',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } });
+    hook('guard-command.mjs', payload, name);
+    assert.equal(state(name, 'linked-child').parentConversationId, 'contract-a');
+    assert.equal(state(name, 'contract-a').subagentCommands.length, 1);
+    assert.equal(state(name, 'contract-b').subagentCommands.length, 0);
+    assert.equal(decision(hook('guard-write-file.mjs', { ...payload,
+      toolCall: { name: 'edit_file', args: { Path: small } } }, name)), 'allow');
+    const target = process.platform === 'win32' ? small.toLowerCase() : small;
+    assert.equal(state(name, 'contract-a').batchFileClaims[target], 'linked-child');
+    const repeat = hook('guard-subagent.mjs', dispatch('contract-a', {
+      toolCall: { name: 'invoke_subagent', args: { TypeName: 'self', Model: 'flash', Prompt: a } } }), name);
+    assert.equal(repeat.overwrite?.Prompt, undefined, 'generated contracts must remain idempotent');
+    const rebased = hook('guard-subagent.mjs', dispatch('contract-b', {
+      toolCall: { name: 'invoke_subagent', args: { TypeName: 'self', Model: 'flash', Prompt: a } } }), name).overwrite.Prompt;
+    assert(!rebased.includes('[PRO-PARENT:contract-a]'));
+    assert.equal(rebased.match(/\[PRO-PARENT:[^\]]+\]/g).length, 1);
+    hook('guard-command.mjs', { ...payload, conversationId: 'rebased-child', lastUserInput: rebased }, name);
+    assert.equal(state(name, 'rebased-child').parentConversationId, 'contract-b');
+  });
+  await test('legacy single-spawn state recovers a parent and migrates its claim', () => {
+    const name = 'legacy-spawn';
+    seed(name, 'legacy-parent', { subagentCommands: [] });
+    fs.writeFileSync(path.join(stateDir(name), 'last_spawn.json'), JSON.stringify({ parent: 'legacy-parent', ts: Date.now() }));
+    hook('guard-command.mjs', base('legacy-child', { transcriptPath: '', lastUserInput: '[FLASH-WORKER] task',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node check.mjs' } } }), name);
+    assert.equal(state(name, 'legacy-child').parentConversationId, 'legacy-parent');
+    const pool = JSON.parse(fs.readFileSync(path.join(stateDir(name), 'last_spawn.json'), 'utf8'));
+    assert.equal(pool.spawns[0].claimedBy, 'legacy-child');
+    assert.equal(pool.pendingCount, 0);
+  });
+  await test('a matching claimed spawn outranks a newer unrelated pending spawn and repairs cached child identity', () => {
+    const name = 'cached-spawn-parent'; const child = 'cached-child';
+    seed(name, child, { isSubAgent: true, subagentEvidence: 'contract' });
+    seed(name, 'matched-parent', { subagentCommands: [] });
+    seed(name, 'unrelated-parent', { subagentCommands: [] });
+    seedSpawns(name, [
+      { parent: 'matched-parent', ts: Date.now() - 5 * 60 * 1000, claimedBy: child },
+      { parent: 'unrelated-parent', ts: Date.now(), claimedBy: null },
+    ]);
+    hook('guard-command.mjs', base(child, { transcriptPath: '', lastUserInput: 'continue',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } }), name);
+    assert.equal(state(name, child).parentConversationId, 'matched-parent');
+    assert.equal(state(name, 'matched-parent').subagentCommands.length, 1);
+    assert.equal(state(name, 'unrelated-parent').subagentCommands.length, 0);
+  });
+  await test('expired, future, malformed, foreign-claimed and own-parent spawns cannot assign a parent', () => {
+    const invalid = [
+      { parent: 'bad-parent', ts: Date.now() - 10 * 60 * 1000, claimedBy: null },
+      { parent: 'bad-parent', ts: Date.now() + 60000, claimedBy: null },
+      { parent: 'bad-parent', ts: 'invalid', claimedBy: null },
+      { parent: 'bad-parent', ts: Date.now(), claimedBy: 'someone-else' },
+      { parent: 'orphan-child', ts: Date.now(), claimedBy: null }, null,
+    ];
+    for (const [i, spawn] of invalid.entries()) {
+      const name = 'invalid-parent-' + i;
+      seed(name, 'bad-parent', { subagentCommands: [] }); seedSpawns(name, [spawn]);
+      hook('guard-command.mjs', base('orphan-child', { transcriptPath: '', lastUserInput: '[FLASH-WORKER] work',
+        toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } }), name);
+      assert.equal(state(name, 'orphan-child').parentConversationId, undefined);
+      assert.equal(state(name, 'bad-parent').subagentCommands.length, 0);
+    }
+    const name = 'mixed-invalid-parent';
+    seed(name, 'valid-parent', { subagentCommands: [] });
+    seedSpawns(name, [null, { ts: 'bad' }, { parent: 'valid-parent', ts: Date.now(), claimedBy: null }]);
+    hook('guard-command.mjs', base('valid-child', { transcriptPath: '', lastUserInput: '[PRO-CONTRACT] work',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } }), name);
+    assert.equal(state(name, 'valid-child').parentConversationId, 'valid-parent');
+    assert.equal(state(name, 'valid-parent').subagentCommands.length, 1);
+  });
+  await test('explicit payload parent takes priority over a conflicting transcript sender', () => {
+    const name = 'explicit-parent'; const file = path.join(TMP, 'conflicting-child.jsonl');
+    fs.writeFileSync(file, JSON.stringify({ source: 'SYSTEM', content: '[Message] sender=other-parent work' }) + '\n');
+    seed(name, 'explicit-parent', { subagentCommands: [] }); seed(name, 'other-parent', { subagentCommands: [] });
+    hook('guard-command.mjs', base('explicit-child', { transcriptPath: file, parentConversationId: 'explicit-parent',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } }), name);
+    assert.equal(state(name, 'explicit-child').parentConversationId, 'explicit-parent');
+    assert.equal(state(name, 'explicit-parent').subagentCommands.length, 1);
+    assert.equal(state(name, 'other-parent').subagentCommands.length, 0);
+  });
+  await test('readable main transcripts cannot recover a spawn parent from pasted sender contracts', () => {
+    const name = 'pasted-main';
+    seed(name, 'pending-parent', { subagentCommands: [] });
+    seedSpawns(name, [{ parent: 'pending-parent', ts: Date.now(), claimedBy: null }]);
+    hook('guard-command.mjs', base('ordinary-main', { lastUserInput: '[PRO-CONTRACT] sender=pending-parent pasted',
+      toolCall: { name: 'run_command', args: { CommandLine: 'node local-check.mjs' } } }), name);
+    assert.equal(state(name, 'ordinary-main').isSubAgent, false);
+    assert.equal(state(name, 'ordinary-main').parentConversationId, undefined);
+    assert.equal(state(name, 'pending-parent').subagentCommands.length, 0);
+    const pool = JSON.parse(fs.readFileSync(path.join(stateDir(name), 'last_spawn.json'), 'utf8'));
+    assert.equal(pool.pendingCount, 1); assert.equal(pool.spawns[0].claimedBy, null);
+  });
+  await test('parallel contract-only children claim distinct spawns and mirror commands without lost updates', async () => {
+    const name = 'parallel-parent-recovery'; const parent = 'parallel-parent';
+    seed(name, parent, { auditBatchId: 'parallel-batch', subagentCommands: [] });
+    seedSpawns(name, Array.from({ length: 8 }, () => ({ parent, ts: Date.now(), claimedBy: null })));
+    await Promise.all(Array.from({ length: 8 }, (_, i) => new Promise((resolve, reject) => {
+      const payload = base('recovery-child-' + i, { transcriptPath: '', lastUserInput: '[PRO-CONTRACT] bounded work',
+        toolCall: { name: 'run_command', args: { CommandLine: 'node check-' + i + '.mjs' } } });
+      const child = spawn(process.execPath, [path.join(ROOT, 'scripts', 'guard-command.mjs')], {
+        cwd: ROOT, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PRO_STATE_DIR: stateDir(name), PRO_MODE: 'enforce', PRO_HARNESS: 'antigravity' },
+      });
+      let stdout = '', stderr = '';
+      child.stdout.on('data', (data) => { stdout += data; }); child.stderr.on('data', (data) => { stderr += data; });
+      child.once('error', reject); child.once('exit', (code) => {
+        try { assert.equal(code, 0, stderr); assert.equal(decision(JSON.parse(stdout)), 'allow'); resolve(); }
+        catch (error) { reject(error); }
+      });
+      child.stdin.end(JSON.stringify(payload));
+    })));
+    const pool = JSON.parse(fs.readFileSync(path.join(stateDir(name), 'last_spawn.json'), 'utf8'));
+    assert.equal(pool.pendingCount, 0); assert.equal(new Set(pool.spawns.map((s) => s.claimedBy)).size, 8);
+    const commands = state(name, parent).subagentCommands;
+    assert.equal(commands.length, 8); assert.equal(new Set(commands.map((row) => row.conversationId)).size, 8);
+    assert(commands.every((row) => row.auditBatchId === 'parallel-batch'));
+    for (let i = 0; i < 8; i++)assert.equal(state(name, 'recovery-child-' + i).parentConversationId, parent);
+  });
   await test('all patch operation kinds protect mode.json at any position', () => {
     const mode = path.join(stateDir('protected-patch'), 'mode.json');
     for (const operation of ['Update File:', 'Add File:', 'Delete File:', 'Move to:']) {
@@ -133,6 +356,37 @@ try {
       assert(updateSession('lock-demo', (s) => { s.counter += 1; }));
       assert.equal(readSession('lock-demo').counter, 2);
     } finally { if (child.exitCode === null) { child.kill(); await exited.catch(() => {}); } }
+  });
+  await test('session persistence failure is reported and temporary state is cleaned up', () => {
+    assert(updateSession('unwritable', (s) => { s.counter = 0; }));
+    const originalWrite = fs.writeFileSync;
+    const target = path.join(SESSION_DIR, 'unwritable.json');
+    fs.writeFileSync = (file, ...args) => {
+      if (String(file).startsWith(target)) throw Object.assign(new Error('simulated disk write failure'), { code: 'EACCES' });
+      return originalWrite(file, ...args);
+    };
+    try { assert.equal(updateSession('unwritable', (s) => { s.counter = 1; }), null); }
+    finally { fs.writeFileSync = originalWrite; }
+    assert.equal(readSession('unwritable').counter, 0);
+    assert(!fs.readdirSync(SESSION_DIR).some((name) => name.startsWith('unwritable.json.') && name.endsWith('.tmp')));
+  });
+  await test('failed parent-state persistence cannot admit an unprotected child write', () => {
+    const name = 'claim-write-failure';
+    fs.mkdirSync(sessionFile(name, 'unwritable-parent'), { recursive: true });
+    const out = hook('guard-write-file.mjs', base('child-write-failure', {
+      parentConversationId: 'unwritable-parent', toolCall: { name: 'edit_file', args: { Path: small } } }), name);
+    assert.equal(decision(out), 'deny');
+    assert(out.reason.includes('写入失败'));
+  });
+  await test('corrupt parent state cannot be reset into an empty file-claim map', () => {
+    const name = 'corrupt-parent';
+    seed(name, 'corrupt-parent', {});
+    const file = sessionFile(name, 'corrupt-parent');
+    fs.writeFileSync(file, '{incomplete claims');
+    const out = hook('guard-write-file.mjs', base('corrupt-child', {
+      parentConversationId: 'corrupt-parent', toolCall: { name: 'edit_file', args: { Path: small } } }), name);
+    assert.equal(decision(out), 'deny');
+    assert.equal(fs.readFileSync(file, 'utf8'), '{incomplete claims');
   });
   await test('aged live locks are not stolen; abandoned legacy locks recover', () => {
     const file = path.join(SESSION_DIR, 'live.lock');
