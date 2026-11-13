@@ -871,7 +871,7 @@ check('子代理互斥：同批次第二个子代理修改同一文件被拦截'
   assert(subWrite(owner, file, { parentConversationId: parentId }).decision === 'allow', 'first owner was denied');
   const alias = process.platform === 'win32' ? file.toLowerCase() : file;
   const denied = subWrite('pfo-mutex-conflict-other', alias, { parentConversationId: parentId });
-  const expected = '【并发互斥守门】文件 ' + path.basename(normFile(file)) +
+  const expected = '【并发互斥守门】文件 ' + path.basename(normFile(file)).toLowerCase() +
     ' 已被同批次并行子代理 (' + owner.slice(0, 8) +
     ') 锁定修改。严禁多代理交叉修改同一文件！请勿修改该文件，将所需变更写入最终四列表格交由主控模型统一合并。';
   assert(denied.decision === 'deny' && denied.reason === expected, 'incorrect file mutex denial');

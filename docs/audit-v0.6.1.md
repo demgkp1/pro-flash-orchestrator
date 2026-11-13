@@ -54,6 +54,8 @@ doctor 当前宿主能力摘要：strategy=flash-fallback, hasHydrogen=false, so
 
 覆盖补强包括父 ID 缺失与歧义、旧状态迁移、契约重注入、损坏状态和写入失败、同批多文件冲突、EOF 与精确省流区间、异常日志与日期参数、提示词镜像、Matcher 对齐、本地状态保留、打包版本、独立 Codex 报告及原生轮询别名。日志保存在忽略目录 .maintenance/review-v0.6.1/，不随源码提交。静态语法、JSON 解析与 git diff --check 均通过。
 
+首次 GitHub Linux 发布关卡发现 doctor 的冲突提示预期保留了文件名大小写，而运行时提示统一小写；已修正测试断言，文件互斥运行逻辑无需变更。Windows doctor 复测通过，最终 Linux 发布关卡结果以 v0.6.1 的 GitHub Actions 为准。
+
 ## 打包与工作区
 
 两个 ZIP 均使用当前工作区构建，并核对实际包内 plugin 版本与独立白名单。
