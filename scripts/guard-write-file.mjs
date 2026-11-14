@@ -2,7 +2,7 @@
 /**
  * PreToolUse guard for write_file / write_to_file / edit_file / replace_file_content / multi_replace_file_content.
  *
- * Implements the v0.6.1 sandwich workflow red line:
+ * Implements the v0.7.0 sandwich workflow red line:
  *   - The Pro architect writes 1-2 core/benchmark files directly.
  *   - Any further multi-file engineering (attempting 3rd distinct file) is blocked
  *     and must be delegated to a Flash worker subagent.

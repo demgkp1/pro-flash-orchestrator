@@ -1,12 +1,12 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.6.1「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.7.0「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.6.1)：主控标杆 + Flash 执行工作流
+# `/flash-dev` (v0.7.0)：主控标杆 + Flash 执行工作流
 
-> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。
+> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.0 支持免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测）与子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
 
 ## 1. 三明治协同四步法
 
@@ -19,7 +19,7 @@ description: >-
 
 `Orchestrator (Argon)`（`modelName` / `model` 匹配 `/orchestrator/i`）或 `PRO_NATIVE_ORCHESTRATOR=1` 启用 **Lite Guard Mode**。原生编排自主读写与派单，保留自身的 Hydrogen 路由并豁免文件数量拦截与数量漂移催派；超大文件切片、防嵌套、禁轮询、派单契约、命令守门和子代理文件互斥锁继续生效。
 
-会话初始为 `explore`。每次放行 `self` 派单进入 `audit` 并增加 2 次切片额度，上限 10；明确起止行号且 ≤80 行时优先消耗额度，支持跨文件连读抽检。子代理完成后的 Audit 唤醒保留阶段与额度，普通新用户轮次重置；额度耗尽后恢复普通读取配额。父子会话各保留最近 10 条脱敏命令摘要；本批缺命令证据时提醒核实。`PreToolUse` 放行不等于执行成功，四列表格仍须提供真实测试结果。
+会话初始为 `explore`。每次放行 `self` 派单进入 `audit` 并增加 2 次切片额度，上限 10；明确起止行号且 ≤80 行时优先消耗额度，支持跨文件连读抽检。子代理完成后的 Audit 唤醒保留阶段与额度，普通新用户轮次重置；额度耗尽后恢复普通读取配额。父子会话各保留最近 10 条脱敏命令摘要；本批缺命令证据时提醒核实。`PreToolUse` 放行不等于执行成功，四列表格仍须提供真实测试结果；子代理同任务连续重复执行相同命令满 3 次触发死循环熔断物理拦截，强制交回 Pro 接管。
 
 `PRO_RESEARCH_MODEL` / `PRO_SELF_MODEL` 分别指定探路与实现模型，优先于 `PRO_WORKER_MODEL`；Antigravity 当前配置应使用合法枚举，如 `inherit` / `flash`。默认 Claude 为 `haiku`、Codex 为 `gpt-5-mini`。Codex 原生入口继续验证实际选中模型的提供方与证明，已有用户配置保留。
 

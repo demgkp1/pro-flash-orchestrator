@@ -2,12 +2,12 @@
 
 面向 Google Antigravity 的生命周期 Hook 协同分流引擎，并提供独立打包的 Codex 适配器。
 
-面向日常编程、代码审查、Bug 排查、重构与文档研读。旗舰模型负责核心决策与标杆实现，已验证的轻量助手负责外围工程、测试与探索。Antigravity 是既有运行路径；v0.6.1 包含独立安装、仍处于分阶段原生验收中的 Codex 集成。
+面向日常编程、代码审查、Bug 排查、重构与文档研读。旗舰模型负责核心决策与标杆实现，已验证的轻量助手负责外围工程、测试与探索。Antigravity 是既有运行路径；v0.7.0 包含独立安装、仍处于分阶段原生验收中的 Codex 集成。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.6.1-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-7%20Passed-green.svg)](#)
+[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -24,15 +24,15 @@
 
 ---
 
-## v0.6.1 守门更新
+## v0.7.0 守门更新
 
-AGY 启动模型探测通过有界的 `agy models` 调用，将结果写入 `STATE_DIR/capabilities.json`。同一 AGY 父进程内最多复用 12 小时，跨终端最多复用 1 小时，后续 Hook 只读缓存。Hydrogen 主会话使用 `hydrogen-main` 策略，通过 `Model="inherit"` 让子代理继承 Gemini 4 Hydrogen；其他主会话默认使用 `Model="flash"`。Antigravity 当前仅接受小写枚举 `inherit`、`flash_lite`、`flash`、`pro`；`hydrogen-worker` 表示已探测到 Hydrogen 能力，`flash-fallback` 表示 Flash 回退。`PRO_HYDROGEN_ID` 仅供未来支持自定义 ID 的宿主显式配置，并受能力检查约束。
+v0.7.0 版本引入了零阻塞后台更新检测与免 Git 一键在线升级，新增子代理死循环熔断器（Thrashing Circuit Breaker），并对 Antigravity 模型探测、枚举安全校验与命令解析稳定性进行了全面强化：
 
-Flash 主会话动态启用 `flash-main-relaxed`，普通读取最多 6 个文件、源码直改最多 4 个文件；子代理保留自身策略。原生 `Orchestrator (Argon)` 进入 Lite Guard Mode，保留自身的 Worker 路由并豁免文件数量拦截与数量漂移催派，切片、防嵌套、禁轮询、命令守门、派单契约与子代理文件互斥锁继续生效。
-
-派单契约携带 `[PRO-PARENT:<id>]`，缺少 payload 父 ID 时仍可从转录或契约恢复；last_spawn.json 仅恢复已认领记录或唯一候选父会话，多个候选父会话不按时间猜选。无法关联 AGY 父会话或状态持久化失败时拒绝源码写入。子代理并发文件互斥物理锁通过父 Session 锁落实互斥分区：同批次第一个认领归一化源码路径的子代理持有修改权，同一子代理可重试，其他子代理命中该文件会被拒绝，并应在四列表格中交主控统一合并。多文件写入先检查全部目标，再原子认领；新派单批次或新 `auditBatchId` 清空 `batchFileClaims`，同批次续派保留认领。Artifact 与依赖等豁免路径不参与认领。
-
-每次放行 `self` 派单增加 2 次明确起止行号的 ≤80 行 Audit 抽检额度，上限 10 次。Audit 唤醒保留阶段与额度，普通新用户轮次重置。`PRO_RESEARCH_MODEL` / `PRO_SELF_MODEL` 指定任务模型；父子会话各保留 10 条脱敏命令放行摘要，该记录不等于测试成功。报告新增启动策略分布与上下文省流估算，doctor 结尾显示当前宿主环境的能力快照。
+- **零阻塞后台版本检测与免 Git 一键升级**：`check-update-worker.mjs` 在 `SessionStart` 阶段异步静默检测 GitHub Releases，结果缓存至 `.state/update-check.json`，会话启动零网络延迟；检测到新版以 UI 卡片优雅提醒，支持 `PRO_NO_UPDATE_CHECK=1` 环境变量完全禁用。普通 Release 用户无需维护 Git 仓库，执行 `node "<插件安装目录>/scripts/update.mjs"` 即可拉取最新精简 Release 资产包覆盖升级，严格进行路径防逃逸检查并 100% 保留本地 `.state/` 状态配置。支持 `--zip <path>` 离线升级与 `--dry-run` 预览。
+- **子代理死循环熔断器 (Thrashing Circuit Breaker)**：在 `guard-command.mjs` 中实时跟踪子代理执行历史。当检测到子代理在同一任务批次内连续重复执行相同失败命令达到上限（`PRO_THRASH_LIMIT` 环境变量控制，默认 3 次，即连续失败重试 2 次）时，触发硬拦截（`deny`），物理熔断循环，强制子代理停止工具调用并按四列表格将错误信息交 Pro 主控接管修复。
+- **AGY 探测超时修复与模型枚举安全**：将 `agy models` 探测超时阈值放宽至 5500ms，在 Windows 平台直接调用 `cmd.exe /c agy.cmd models` 规避脚本执行失败与级联超时。引入 `INVOCABLE_SUBAGENT_MODELS` 白名单校验，确保子代理派单模型严格限定于 Antigravity 合法小写枚举（`inherit`、`flash_lite`、`flash`、`pro`），杜绝非法标识传入。
+- **PowerShell 管道别名与会话稳定性**：`guard-command.mjs` 识别 PowerShell `select` 别名（对应 `Select-Object`）在管道切片（`-First`/`-Last`）与只读判定中的语义。子代理命令记录前检查 `sessionExists`，防止生成空骨架父会话文件。`scripts/install.mjs` 在对比文件时对 CRLF 与 LF 换行符归一化，消除误判覆写。
+- **完整继承既有守门体系**：Hydrogen 继承（`inherit`）、Flash 主模型宽松策略（`flash-main-relaxed`，最多读 6 改 4）、原生 Orchestrator Lite Guard Mode、同批次源码互斥物理锁、Audit 抽检配额（≤80行）以及递归/轮询拦截机制均持续稳定生效。
 
 ## 协同分工模型
 
@@ -91,19 +91,36 @@ Flash 主会话动态启用 `flash-main-relaxed`，普通读取最多 6 个文�
 | **冷启动、递归与轮询拦截** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **身份须有证据**：依据父会话元数据、子代理转录或冷启动契约标记识别身份；最近派单记录不能单独作为身份依据，认领必须匹配明确的父会话；<br>2. **递归阻断**：严格拦截子代理套娃派单（`deny`）；<br>3. **轮询拦截**：拦截主模型调用 `manage_subagents(Action="list")` 轮询子代理状态，消除等待期间无效 Token 消耗与异步抢改，引导直接结束回合静默等待系统唤醒（`Action="kill"` 放行）。 | 消除多层死循环、抢跑改写与轮询上下文浪费，保证异步协同秩序。 |
 | **中立契约与自定义守门** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 派单、自定义代理定义（`define_subagent`）及消息追加自动注入 `[FLASH-WORKER]` 与契约：工程子代理必须返回四列表格+自检命令与结果，`research` 调研子代理直接输出结构化摘要无需写文件。`artifactDirectoryPath` 丢失时安全回退至绝对路径 `~/.gemini/antigravity/brain/<convId>`。 | 消除大段源码回贴与只读沙箱写文件异常，防止工作区根目录污染。 |
 | **切片防泄洪与多文件连读拦截** | `PreToolUse` (`read_file`, `view_file`) | 1. **智能切片**：未显式切片读取代码文件（300-800行）自动收窄至 [1, 150] 行，>800 行代码或 >400 行文档/日志直接拦截引导派单；<br>2. **防泄洪增强**：文件 >40KB 且平均行长 >4KB（Minified 压缩代码/数据）一律物理拦截；<br>3. **多文件切片连读拦截**：维护 `readsSinceDispatch`，主模型试图切片连读第 4 个不同源码/文档文件触发硬拦截（`deny`），强制改派 `research (flash)`。自动豁免依赖库与 Artifact 目录。 | 消除单行压缩数据穿透与超大文件撑爆上下文的隐患，彻底阻断主模型以切片形式逐个连读多文件探路。 |
-| **命令防倾倒增强** | `PreToolUse` (`run_command`) | 递归解包多层嵌套 Shell；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。**全模式防倾倒**：覆盖变量赋值（`$content = Get-Content`）、子表达式（`Resolve-Path`）及 .NET 静态方法（`[IO.File]::ReadAllText`）。放行真实文件重定向输出（`>`、`>>`、`| Set-Content`、`> /dev/null`）。 | 杜绝终端海量日志倾倒至对话中，封堵全部管道与代码逃逸手段，同时不影响离线写盘。 |
+| **命令防倾倒与死循环熔断器** | `PreToolUse` (`run_command`) | 递归解包多层嵌套 Shell；按顶层管道切分判定；拦截未分页的 `git log` 与针对 >400KB 文件的无界 `cat`/`Get-Content`。覆盖变量赋值、子表达式及 .NET 静态方法；放行文件重定向输出；精准识别 PowerShell `select` 别名。**死循环熔断器**：实时追踪子代理执行历史，连续重复执行相同失败命令达到 `PRO_THRASH_LIMIT`（默认 3 次）时物理硬拦截（`deny`），阻断重试并强制四列表格汇报交 Pro 主控接管。 | 杜绝终端海量日志倾倒，消除代码逃逸；杜绝子代理盲目死循环重试与 Token 浪费，确保主控及时介入修复。 |
 | **轮次边界唤醒与去重漂移感知** | `PreInvocation` | 1. **长会话轮次边界唤醒**：基于 `globalStep >= 8` 判定，在用户新需求交互轮次起始处注入瞬态 `ephemeralMessage`，唤醒架构师分流职责，根治长程注意力稀释；<br>2. **去重漂移告警**：基于去重且剔除豁免路径的 `readsSinceDispatch` 与 `writesSinceDispatch`，若连续改写或连读未派单触发单轮即抛告警；<br>3. **精准降噪**：运行时模型切为 Flash 时自动停用架构师漂移告警，彻底过滤文本中工具名字面量的误报。 | 零历史上下文残留，精准告警与轮次唤醒兼备，保障架构师长期自律。 |
 
 ---
 
 ## 平台运行包与安装
 
-v0.6.1 发布两个相互独立的资产：
+v0.7.0 发布两个相互独立的资产：
 
-- `pro-flash-orchestrator-antigravity-v0.6.1.zip`，根目录为 `pro-flash-orchestrator/`。
-- `pro-flash-orchestrator-codex-v0.6.1.zip`，根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`。
+- `pro-flash-orchestrator-antigravity-v0.7.0.zip`，根目录为 `pro-flash-orchestrator/`。
+- `pro-flash-orchestrator-codex-v0.7.0.zip`，根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`。
 
 ### Antigravity
+
+#### 方式一：Release 用户免 Git 一键在线升级（推荐）
+
+通过发布包安装的用户无需配置 Git 仓库或克隆源码，直接在安装目录下执行内置的更新脚本，即可一键在线拉取最新 Release 精简包覆盖升级：
+
+```powershell
+node "<插件安装目录>/scripts/update.mjs"
+```
+
+升级过程自动从 GitHub Releases 获取最新官方精简包（`pro-flash-orchestrator-antigravity-v*.zip`），执行严格的路径防逃逸与符号链接安全校验，覆盖运行时文件并 100% 保护与保留用户的 `.state/` 状态目录、模式配置及复盘日志。
+- 如网络受限，可先手动下载 ZIP 资产包，执行本地离线升级：
+  ```powershell
+  node "<插件安装目录>/scripts/update.mjs" --zip "path/to/archive.zip"
+  ```
+- 支持 `--dry-run` 参数预览待更新文件，不产生实际写入。
+
+#### 方式二：源码开发者/维护工程部署安装
 
 维护工程保留 Git、测试与发布工具，Antigravity 安装目录只接收白名单内的运行文件：
 
@@ -133,7 +150,7 @@ node doctor.mjs --verify-worker
 node doctor.mjs
 ```
 
-v0.6.1 分发默认候选为 `gpt-5-mini`、low 推理强度，但必须通过真实请求后才允许派发；模型还必须出现在原生工具可选目录中：当前宿主仅暴露 `gpt-6.1-sol` 与 `gpt-6-astra`，本地 Worker 已配置为 `gpt-6.1-sol`/low。历史探针结果保留在验收文档中；最小 CLI 探针成功不代表原生子代理可用。验证失败或失效时会阻止派发，不会静默回退到主模型。
+v0.7.0 分发默认候选为 `gpt-5-mini`、low 推理强度，但必须通过真实请求后才允许派发；模型还必须出现在原生工具可选目录中：当前宿主仅暴露 `gpt-6.1-sol` 与 `gpt-6-astra`，本地 Worker 已配置为 `gpt-6.1-sol`/low。历史探针结果保留在验收文档中；最小 CLI 探针成功不代表原生子代理可用。验证失败或失效时会阻止派发，不会静默回退到主模型。
 
 注销独立集成：
 
@@ -143,7 +160,7 @@ node install.mjs --uninstall
 
 卸载仅移除生成的 Pro-Flash 用户 Hook 与官方注册，保留解压源码和 `CODEX_HOME/plugin-data/pro-flash-orchestrator` 控制配置。
 
-六个用户级原生 Hook 已由用户审阅为 trusted，真实桌面会话也已观察到 `PreToolUse`。完整原生守门覆盖与原生助手派发闭环仍待验收，因此 v0.6.1 不宣称 Codex 已完整可用。账户登录和 Claude Code 也尚未真实验证。证据与待办见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。
+六个用户级原生 Hook 已由用户审阅为 trusted，真实桌面会话也已观察到 `PreToolUse`。完整原生守门覆盖与原生助手派发闭环仍待验收，因此 v0.7.0 不宣称 Codex 已完整可用。账户登录和 Claude Code 也尚未真实验证。证据与待办见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。
 
 ### 维护测试与发布打包
 
@@ -158,6 +175,7 @@ node scripts/test-v060.mjs
 node scripts/test-capabilities.mjs
 node scripts/test-install.mjs
 node scripts/test-codex.mjs
+node scripts/test-update.mjs
 node scripts/install.mjs
 ```
 
@@ -170,7 +188,7 @@ node scripts/package.mjs --runtime --platform codex --worktree
 
 `runtime-files.json` 与 Codex Marketplace 构建器维护各自的精确白名单。完整源码包使用 `--source --worktree`。已有 Git 安装目录必须先将完整维护工程迁出，再部署运行文件。
 
-v0.6.1 包含上述守门更新与独立平台适配器；原生验收状态继续以所链接的证据为准。
+v0.7.0 包含上述守门更新与独立平台适配器；原生验收状态继续以所链接的证据为准。
 
 ---
 
@@ -207,9 +225,14 @@ v0.6.1 包含上述守门更新与独立平台适配器；原生验收状态继�
    ```
    > **安全说明 (S1)**：`.state/mode.json` 属于用户安全配置，只能由人类用户手动编辑修改，受守门机制严格保护，严禁任何 AI 代理通过工具修改或覆盖。
    允许 `Get-Content`、`cat` 等只读查询。批量补丁会检查全部受影响路径（包含重命名目标），再统一校验写入配额。
-2. 环境变量（修改后需重启 Antigravity 生效）：
-   - Windows PowerShell: `$env:PRO_MODE="shadow"`
-   - macOS / Linux: `export PRO_MODE=shadow`
+2. 环境变量（修改后需重启 Antigravity / 终端生效）：
+   - 运行模式：
+     - Windows PowerShell: `$env:PRO_MODE="shadow"`
+     - macOS / Linux: `export PRO_MODE=shadow`
+   - 后台更新检测：
+     - 设置 `PRO_NO_UPDATE_CHECK=1` 可完全禁用后台 GitHub Release 更新检测与会话启动提醒卡片。
+   - 子代理死循环熔断器：
+     - 设置 `PRO_THRASH_LIMIT=3`（默认 3 次，最低 2 次）可配置子代理连续重复执行相同命令的熔断阈值，超限后物理拦截并移交 Pro 主控架构师接管。
 
 ---
 
@@ -288,15 +311,18 @@ pro-flash-orchestrator/
 │       └── SKILL.md            # /flash-dev 技能描述与提示词模板
 ├── scripts/
 │   ├── lib.mjs                 # 核心共享库（Payload 解析、子代理识别、冷启动派生、日志）
-│   ├── session-start.mjs       # 会话初始化引导与状态卡片
+│   ├── session-start.mjs       # 会话初始化引导、状态卡片与后台更新触发
+│   ├── check-update-worker.mjs # 零阻塞后台 GitHub Release 版本检测器
+│   ├── update.mjs              # 严格保留 .state/ 的免 Git 运行升级工具
 │   ├── pre-invocation.mjs      # 轮次边界瞬态唤醒与去重漂移提醒
 │   ├── guard-subagent.mjs      # 子代理守门（递归阻断、轮询拦截、物理降级、中立契约）
 │   ├── guard-read-file.mjs     # 文件读取守门（智能切片、生态豁免、切片连读拦截）
 │   ├── guard-write-file.mjs    # 文件写入守门（标杆配额与同批次文件互斥）
-│   ├── guard-command.mjs       # 命令守门（多层解包、重定向放行、倾倒拦截）
+│   ├── guard-command.mjs       # 命令守门（多层解包、重定向放行、倾倒拦截、死循环熔断）
 │   ├── doctor.mjs              # doctor 断言、实时能力快照与 Codex 诊断
 │   ├── test-concurrency.mjs    # 多进程并发压测与守门集成测试套件
 │   ├── test-regressions.mjs    # 已审计漏洞及边界场景的回归测试
+│   ├── test-update.mjs         # 后台检测与一键升级本地测试套件
 │   ├── install.mjs             # Antigravity 部署与 Codex Marketplace 安装
 │   ├── codex-*.mjs             # Codex 原生 Hook、运行时、安装与维护桥接
 │   ├── runtime-files.mjs       # Shared runtime allowlist loader

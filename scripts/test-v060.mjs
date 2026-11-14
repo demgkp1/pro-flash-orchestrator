@@ -102,7 +102,7 @@ await test('report discards malformed JSON values and rejects invalid day window
   }
 });
 await test('release metadata, root prompt mirrors and legacy matcher sets stay synchronized',()=>{
-  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.6.1');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.0');
   for(const [mirror,canonical] of [['SKILL.md','skills/flash-dev/SKILL.md'],['AGENTS.md','rules/AGENTS.md']]) {
     assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),
       fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n'));
@@ -130,14 +130,24 @@ await test('worker defaults and task override precedence are consistent',()=>{
   assert.equal(lib.targetWorkerModel('antigravity'),'flash');
   process.env.PRO_WORKER_MODEL='common';process.env.PRO_RESEARCH_MODEL='hydrogen';process.env.PRO_SELF_MODEL='flash';
   try {
-    for(const harness of ['codex','claude','antigravity']) {
+    for(const harness of ['codex','claude']) {
       assert.equal(lib.targetWorkerModel(harness,'research'),'hydrogen');
       assert.equal(lib.targetWorkerModel(harness,'self'),'flash');
       assert.equal(lib.targetWorkerModel(harness),'common');
     }
+    // In antigravity, non-enum strings are safely filtered out and fall back to flash/inherit
+    assert.equal(lib.targetWorkerModel('antigravity','research'),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','self'),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity'),'flash');
     assert.equal(runtime.workerConfig(undefined,'research').workerModel,'hydrogen');
     assert.equal(runtime.workerConfig(undefined,'self').workerModel,'flash');
   } finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
+  // Legal enum overrides take effect in antigravity
+  process.env.PRO_RESEARCH_MODEL='flash_lite';process.env.PRO_SELF_MODEL='pro';
+  try {
+    assert.equal(lib.targetWorkerModel('antigravity','research'),'flash_lite');
+    assert.equal(lib.targetWorkerModel('antigravity','self'),'pro');
+  } finally {for(const key of ['PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
 });
 await test('all platform matcher files include every requested native tool name',()=>{
   const groups={
@@ -373,6 +383,7 @@ await test('parent summary combines children, supports caller context, and keeps
 await test('contract-only child and cached parent sessions can record commands without explicit parent metadata',()=>{
   hook('guard-command.mjs',command('solo-child','node --test check.js',{transcriptPath:'',lastUserInput:'[FLASH-WORKER] check'}));
   assert.equal(lib.readSession('solo-child').subagentCommands.length,1);
+  seed('cached-parent',{});
   seed('cached-child',{isSubAgent:true,subagentEvidence:'parent',parentConversationId:'cached-parent'});
   hook('guard-command.mjs',command('cached-child','node --test check.js',{transcriptPath:'',lastUserInput:'continue'}));
   assert.equal(lib.readSession('cached-parent').subagentCommands.length,1);

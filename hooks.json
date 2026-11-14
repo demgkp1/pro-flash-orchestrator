@@ -5,7 +5,7 @@
       {
         "type": "command",
         "command": "node ./scripts/session-start.mjs",
-        "timeout": 5
+        "timeout": 10
       }
     ]
   },

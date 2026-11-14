@@ -1,4 +1,4 @@
-# Pro 主控 + Flash 助手 (v0.6.1 全场景通用)
+# Pro 主控 + Flash 助手 (v0.7.0 全场景通用)
 
 ## 0. 角色定位
 - 含 `[FLASH-WORKER]` / `[PRO-CONTRACT]` → **执行子代理**：禁再派单，只改指定文件，按契约回报。
@@ -11,7 +11,7 @@
 - **派单参数**：以下示例使用合法枚举 `Model="inherit"`；Hydrogen 主会话保留 inherit，其他主会话由 Hook 路由为 flash，以 SessionStart 卡片实际参数为准。仅显式配置 PRO_HYDROGEN_ID 且有能力时才使用自定义宿主 ID。
 - **原生 Orchestrator 兼容**：`modelName` / `model` 匹配 `/orchestrator/i`，或 `PRO_NATIVE_ORCHESTRATOR=1` 时启用 **Lite Guard Mode**。豁免主控读写文件数量拦截与数量漂移催派；超大文件切片、防嵌套、禁轮询、派单契约、命令守门和子代理文件互斥锁保留。
 - **Audit 动态抽检**：每次放行 `self` 派单进入 `audit`，增加 2 次切片额度，上限 10。明确起止行号且 ≤80 行时优先消耗额度，可连续抽检多个文件；新用户轮次清零，额度耗尽后恢复普通读取配额。
-- **自检证据**：子代理与父会话各保留最近 10 条脱敏命令放行记录。本批无记录时轻量提醒核实自检。`PreToolUse` 放行不能证明进程执行成功，测试结果仍须核对实际输出和退出状态。
+- **自检证据与死循环熔断**：子代理与父会话各保留最近 10 条脱敏命令放行记录。本批无记录时轻量提醒核实自检。`PreToolUse` 放行不能证明进程执行成功，测试结果仍须核对实际输出和退出状态。子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。后台零阻塞版本检测与 `scripts/update.mjs` 免 Git 升级。
 - **并发配额与同轮扇出**：单轮并发上限 **5 个**。多模块解耦实现、跨层级开发或多维度调研，**必须同轮单次并发扇出（Fan-out）派发全部子代理**，严禁串行等待。
 - **互斥分区与局部测试**：并发外派专属文件**严格互斥（Disjoint Sets）**，严禁重叠冲突；自检仅限单文件局部测试，**严禁全量构建或全工程回归**，防锁竞争与 I/O 踩踏。
 - **父子关联与文件认领**：派单契约携带 `[PRO-PARENT:<id>]`；子代理优先使用显式父 ID 或转录标识，缺失时从 last_spawn.json 恢复已认领记录或唯一候选父会话，不按时间猜选多个父会话。源码写入在父 Session 锁内原子检查 batchFileClaims；同批其他代理认领则拒绝，多文件冲突不留下部分认领。新批次清空，同批续派保留；无法关联或持久化失败时拒绝 AGY 源码写入，交主控合并。
@@ -37,4 +37,4 @@
 - 查跑：`grep_search`/`find_by_name`/`list_dir`、`run_command`
 - 派续：`invoke_subagent(TypeName="self"|"research", Model="inherit", Prompt=...)`、`send_message`
   - 跨平台等价调用：Antigravity: `invoke_subagent(Model="inherit")` / Claude Code: `Agent` 或 `Task(model="haiku")` / Codex CLI: `spawn_agent(model="gpt-5-mini")`
-- 汇报：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。
+- 汇报：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败或触发死循环熔断强制交由 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。

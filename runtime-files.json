@@ -17,6 +17,10 @@
     { "from": "docs/INSTALL.md", "to": "README.md" }
   ],
   "adapters": {
+    "antigravity": [
+      "scripts/check-update-worker.mjs",
+      "scripts/update.mjs"
+    ],
     "claude": ["hooks/claude-settings-hooks.json"],
     "codex": ["hooks/codex-hooks.json"]
   }

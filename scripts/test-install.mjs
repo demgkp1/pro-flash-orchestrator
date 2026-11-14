@@ -40,13 +40,13 @@ try {
   });
   test('dry run validates the layout without creating plugin files', () => {
     const out = installRuntime(target, { dryRun: true });
-    assert.equal(out.files, 15);
+    assert.equal(out.files, 17);
     assert.equal(fs.existsSync(path.join(target, 'plugin.json')), false);
     checkState();
   });
   test('Antigravity install contains only runtime files and keeps user state', () => {
     const out = installRuntime(target);
-    assert.equal(out.files, 15);
+    assert.equal(out.files, 17);
     for (const { to } of runtimeEntries({ platform: 'antigravity' })) assert(fs.existsSync(path.join(target, to)), to);
     for (const file of ['.git', '.github', 'runtime-files.json', 'hooks', 'scripts/doctor.mjs',
       'scripts/test-regressions.mjs', 'scripts/package.mjs', 'scripts/install.mjs']) {

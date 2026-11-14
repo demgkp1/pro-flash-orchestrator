@@ -18,6 +18,7 @@ import {
   readPayload,
   readSession,
   resolvePath,
+  sessionExists,
   setContext,
   toolName,
   updateSession,
@@ -201,7 +202,7 @@ function isBoundedPipeline(command) {
     const name = String(tokens[i + 1] || '').toLowerCase();
     const end = tokens.indexOf('|', i + 1);
     const args = tokens.slice(i + 2, end < 0 ? tokens.length : end);
-    if (name === 'select-object') {
+    if (name === 'select-object' || name === 'select') {
       if (args.some((arg, j) => /^-(First|Last)$/i.test(arg) && /^\d+$/.test(args[j + 1] || ''))) return true;
     } else if (name === 'head' || name === 'tail') {
       if (args.some((arg) => /^(?:-.*f.*|--follow(?:=.*)?)$/.test(arg))) continue;
@@ -222,7 +223,7 @@ function isReadOnlyModePipeline(command) {
   const readCommands = new Set([
     'cat', 'type', 'get-content', 'gc', 'head', 'tail', 'more', 'less', 'rg', 'grep',
     'select-string', 'get-item', 'test-path', 'get-childitem', 'ls', 'stat', 'file',
-    'select-object', 'sort-object', 'measure-object', 'out-string', 'out-null',
+    'select-object', 'select', 'sort-object', 'measure-object', 'out-string', 'out-null',
     'write-output', 'echo', 'printf',
   ]);
   const sinks = new Set(['set-content', 'add-content', 'out-file', 'sc', 'ac', 'tee']);
@@ -409,6 +410,23 @@ function decide() {
       status: 'allowed',
       ...(child.auditBatchId || parent?.auditBatchId ? { auditBatchId: child.auditBatchId || parent.auditBatchId } : {}),
     };
+    const thrashLimit = Math.max(2, Number(process.env.PRO_THRASH_LIMIT) || 3);
+    const normCmd = entry.command.trim().replace(/\s+/g, ' ');
+    const prevCommands = Array.isArray(child.subagentCommands) ? child.subagentCommands : [];
+    let consecutiveSame = 0;
+    for (let i = prevCommands.length - 1; i >= 0; i -= 1) {
+      const prev = prevCommands[i];
+      if (entry.auditBatchId && prev?.auditBatchId && prev.auditBatchId !== entry.auditBatchId) break;
+      if (String(prev?.command || '').trim().replace(/\s+/g, ' ') === normCmd) consecutiveSame += 1;
+      else break;
+    }
+    if (normCmd && consecutiveSame + 1 >= thrashLimit) {
+      const reason = `【死循环熔断拦截】检测到子代理在同一任务中连续重复执行相同命令已达上限（${consecutiveSame + 1}次，即连续 ${consecutiveSame} 次失败重试）。根据「连续 2 次失败 Pro 接管」红线，已物理熔断当前重试循环：请立即停止调用任何工具，直接按四列表格向主控如实汇报已修改行号与报错信息，交由 Pro 主控架构师接管修复！`;
+      logDecision({ hook: 'guard-command', tool, mode, sub: true,
+        action: mode === 'shadow' ? 'shadow-deny' : 'deny',
+        rule: 'thrash-circuit-breaker', command: entry.command, count: consecutiveSame + 1, reason });
+      if (mode !== 'shadow') return deny(payload, reason);
+    }
     const recordCommand = (state) => {
       state.subagentCommands = [...(Array.isArray(state.subagentCommands) ? state.subagentCommands : []), entry].slice(-10);
     };
@@ -416,7 +434,7 @@ function decide() {
       if (entry.auditBatchId && !state.auditBatchId) state.auditBatchId = entry.auditBatchId;
       recordCommand(state);
     });
-    const parentRecorded = parent ? updateSession(parentId, recordCommand) : true;
+    const parentRecorded = parent && sessionExists(parentId) ? updateSession(parentId, recordCommand) : true;
     logDecision({ hook: 'guard-command', tool, mode, sub: true,
       action: recorded && parentRecorded ? 'pass' : 'command-record-failed', command: entry.command,
       recorded: Boolean(recorded && parentRecorded) });

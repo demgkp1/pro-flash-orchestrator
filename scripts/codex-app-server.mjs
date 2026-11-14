@@ -28,6 +28,6 @@ export async function inspectNative({cwd,models=false,timeout=20000}={}) {
         }
       }
     });
-    send({id:1,method:'initialize',params:{clientInfo:{name:'pfo_diagnostics',title:'Pro-Flash read-only diagnostics',version:'0.6.1'},capabilities:{experimentalApi:true}}});
+    send({id:1,method:'initialize',params:{clientInfo:{name:'pfo_diagnostics',title:'Pro-Flash read-only diagnostics',version:'0.7.0'},capabilities:{experimentalApi:true}}});
   });
 }

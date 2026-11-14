@@ -6,7 +6,7 @@ if(process.argv.includes('--platform') && process.argv[process.argv.indexOf('--p
   process.exit(process.argv.includes('--verify-worker') && result.status !== 'verified' ? 1 : 0);
 }
 /**
- * Pro-Flash Orchestrator v0.6.1 — doctor
+ * Pro-Flash Orchestrator v0.7.0 — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -147,7 +147,7 @@ function mutexDispatch(parentId, turnId, input, typeName = 'self') {
   }), MUTEX_ENV);
 }
 
-console.log('\nPro-Flash Orchestrator v0.6.1 — doctor\n');
+console.log('\nPro-Flash Orchestrator v0.7.0 — doctor\n');
 
 /* ------------------------------------------------------------ environment */
 check('诊断：能力快照来自隔离前的宿主环境', () => {

@@ -337,7 +337,7 @@ await test('both platform ZIPs use exact independent allowlists',()=>{
  const entries=pack.listZipEntries(codex.outFile);
  assert(!entries.some(e=>e.includes('scripts/install.mjs')||e.includes('scripts/test-')||e.includes('scripts/doctor.mjs')||e.includes('scripts/session-start.mjs')));
  const native=pack.createReleaseZip({runtime:true,platform:'antigravity',worktree:true,tag:'v0.6.1',outFile:path.join(temp,'antigravity.zip')});
- assert.equal(pack.listZipEntries(native.outFile).filter(e=>!e.endsWith('/')).length,15);
+ assert.equal(pack.listZipEntries(native.outFile).filter(e=>!e.endsWith('/')).length,17);
 });
 } finally {
  if(path.dirname(temp)!==path.resolve(os.tmpdir())||!path.basename(temp).startsWith('pfo-codex-tests-'))throw new Error('Invalid cleanup target');

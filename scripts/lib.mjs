@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Shared helpers for pro-flash-orchestrator hooks (v0.6.1).
+ * Shared helpers for pro-flash-orchestrator hooks (v0.7.0).
  *
  * Design rules:
  *  - Never throw into the caller: every helper is exception-safe, so a hook can
@@ -11,7 +11,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -28,6 +28,16 @@ export const SPAWN_LOCK = path.join(STATE_DIR, 'last_spawn.lock');
 const SPAWN_TTL_MS = 10 * 60 * 1000;
 export const CAPABILITIES_FILE = path.join(STATE_DIR, 'capabilities.json');
 const CAPABILITIES_LOCK = `${CAPABILITIES_FILE}.lock`;
+export const UPDATE_CHECK_FILE = path.join(STATE_DIR, 'update-check.json');
+export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+export const PLUGIN_VERSION = (() => {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'plugin.json'), 'utf8'));
+    return typeof manifest?.version === 'string' && manifest.version.trim() ? manifest.version.trim() : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
 
 /* ------------------------------------------------------------------- locks */
 
@@ -314,23 +324,127 @@ export function getHarness() {
   return HARNESS;
 }
 
-export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CTX) {
-  if (taskType === 'research' && process.env.PRO_RESEARCH_MODEL) return process.env.PRO_RESEARCH_MODEL;
-  if (taskType === 'self' && process.env.PRO_SELF_MODEL) return process.env.PRO_SELF_MODEL;
-  if (process.env.PRO_WORKER_MODEL) return process.env.PRO_WORKER_MODEL;
-  if (harness === 'claude') return 'haiku';
-  if (harness === 'codex') return 'gpt-5-mini';
-  if (harness === 'antigravity') {
-    if (process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true) {
-      return process.env.PRO_HYDROGEN_ID;
+export function compareSemver(a, b) {
+  const parse = (val) => {
+    if (typeof val !== 'string') return null;
+    const match = val.trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)/);
+    return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+  };
+  const va = parse(a);
+  const vb = parse(b);
+  if (!va || !vb) return 0;
+  for (let i = 0; i < 3; i += 1) {
+    if (va[i] > vb[i]) return 1;
+    if (va[i] < vb[i]) return -1;
+  }
+  return 0;
+}
+
+export function readUpdateNotice(payload = CTX, {
+  currentVersion = PLUGIN_VERSION,
+  checkFile = UPDATE_CHECK_FILE,
+  spawnWorker = true,
+  now = Date.now(),
+} = {}) {
+  try {
+    if (process.env.PRO_NO_UPDATE_CHECK === '1') return null;
+    const convId = String(payload?.conversationId || payload?.session_id || '');
+    if (process.env.PRO_TEST === '1' || process.env.ARGON_TEST === '1' || /^doctor-/i.test(convId)) {
+      return null;
     }
+    const harness = payload?._harness || (payload && Object.keys(payload).length > 0 ? detectHarness(payload) : getHarness());
+    if (harness !== 'antigravity') return null;
+    if (capabilitySubagent(payload)) return null;
+
+    let data = null;
+    if (fs.existsSync(checkFile)) {
+      try {
+        const parsed = JSON.parse(fs.readFileSync(checkFile, 'utf8'));
+        if (parsed && typeof parsed === 'object') data = parsed;
+      } catch {
+        data = null;
+      }
+    }
+
+    const checkedAt = Number(data?.checkedAt || 0);
+    const expired = !checkedAt || now - checkedAt > UPDATE_CHECK_TTL_MS;
+    if (expired) {
+      fs.mkdirSync(path.dirname(checkFile), { recursive: true });
+      const stamp = {
+        ...(data || {}),
+        checkedAt: now,
+        currentVersion,
+      };
+      safeWriteFileSync(checkFile, JSON.stringify(stamp, null, 2));
+      const tmpRoot = path.resolve(os.tmpdir()).toLowerCase();
+      const isTmpState = path.resolve(checkFile).toLowerCase().startsWith(tmpRoot);
+      if (spawnWorker && process.env.PRO_UPDATE_SPAWN !== '0' && (!isTmpState || process.env.PRO_ALLOW_UPDATE_WORKER === '1')) {
+        try {
+          const child = spawn(process.execPath, [path.join(SCRIPTS_DIR, 'check-update-worker.mjs')], {
+            detached: true,
+            stdio: 'ignore',
+            windowsHide: true,
+            env: { ...process.env, PRO_STATE_DIR: path.dirname(checkFile) },
+          });
+          child.unref();
+        } catch {
+          // Never block hook execution if background worker fails to spawn.
+        }
+      }
+    }
+
+    if (data && typeof data.latestVersion === 'string' && compareSemver(data.latestVersion, currentVersion) > 0) {
+      const latestVersion = data.latestVersion.trim().replace(/^v/i, '');
+      const releaseUrl = typeof data.releaseUrl === 'string' && data.releaseUrl.trim()
+        ? data.releaseUrl.trim()
+        : 'https://github.com/demgkp1/pro-flash-orchestrator/releases/latest';
+      const assetUrl = typeof data.assetUrl === 'string' ? data.assetUrl.trim() : '';
+      return {
+        currentVersion: String(currentVersion).replace(/^v/i, ''),
+        latestVersion,
+        releaseUrl,
+        assetUrl,
+        updateCommand: `node "${path.join(PLUGIN_DIR, 'scripts', 'update.mjs')}"`,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+export const INVOCABLE_SUBAGENT_MODELS = new Set(['inherit', 'flash_lite', 'flash', 'pro']);
+
+function validAntigravitySubagentModel(value) {
+  if (typeof value !== 'string') return '';
+  const normalized = value.trim().toLowerCase();
+  return INVOCABLE_SUBAGENT_MODELS.has(normalized) ? normalized : '';
+}
+
+export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CTX) {
+  const envCandidate = (taskType === 'research' && process.env.PRO_RESEARCH_MODEL)
+    ? process.env.PRO_RESEARCH_MODEL
+    : (taskType === 'self' && process.env.PRO_SELF_MODEL)
+      ? process.env.PRO_SELF_MODEL
+      : process.env.PRO_WORKER_MODEL || '';
+  if (harness === 'antigravity') {
+    const validEnv = validAntigravitySubagentModel(envCandidate);
+    if (validEnv) return validEnv;
+    const validHydrogenEnv = process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true
+      ? validAntigravitySubagentModel(process.env.PRO_HYDROGEN_ID)
+      : '';
+    if (validHydrogenEnv) return validHydrogenEnv;
     // The host currently accepts only inherit/flash_lite/flash/pro. Hydrogen
     // main sessions must inherit to avoid silently running a Gemini 3.8 worker.
     if (modelNames(payload).some((name) => /hydrogen/i.test(name))) return 'inherit';
     return 'flash';
   }
+  if (envCandidate) return envCandidate;
+  if (harness === 'claude') return 'haiku';
+  if (harness === 'codex') return 'gpt-5-mini';
   return 'flash';
 }
+
 
 /* --------------------------------------------------------- AGY capabilities */
 
@@ -448,15 +562,20 @@ export function detectModelCapabilities(payload = CTX, force = false) {
     if (!force && reusableCapabilities(cached, Date.now())) return readCapabilities(payload);
     let capabilities;
     const started = Date.now();
-    const options = { timeout: 2500, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 256 * 1024 };
+    const probeTimeoutMs = 5500;
+    const options = { timeout: probeTimeoutMs, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, maxBuffer: 256 * 1024 };
     try {
       let text;
-      try { text = execFileSync('agy', ['models'], options); }
+      try {
+        text = process.platform === 'win32'
+          ? execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'agy.cmd models'], options)
+          : execFileSync('agy', ['models'], options);
+      }
       catch (error) {
-        if (process.platform !== 'win32' || error.code === 'ETIMEDOUT' || Date.now() - started >= 2500) throw error;
+        if (process.platform !== 'win32' || error.code === 'ETIMEDOUT' || Date.now() - started >= probeTimeoutMs) throw error;
         // Windows cannot execute a .cmd shim directly through execFileSync.
-        text = execFileSync(process.env.ComSpec || 'cmd.exe', ['/d', '/s', '/c', 'agy.cmd models'],
-          { ...options, timeout: Math.max(1, 2500 - (Date.now() - started)) });
+        text = execFileSync('agy', ['models'],
+          { ...options, timeout: Math.max(1, probeTimeoutMs - (Date.now() - started)) });
       }
       const models = parseAvailableModels(text);
       if (models.length === 0) throw new Error('No models parsed from agy output');
@@ -1225,6 +1344,11 @@ function sessionFile(conversationId) {
 
 function sessionLockFile(conversationId) {
   return path.join(SESSION_DIR, `${sanitizeSessionId(conversationId)}.lock`);
+}
+
+export function sessionExists(conversationId) {
+  if (!conversationId) return false;
+  return fs.existsSync(sessionFile(conversationId));
 }
 
 function defaultSession(extra = {}) {

@@ -69,9 +69,10 @@ await test('concurrent AGY starts share one locked probe and a complete cache',a
 });
 await test('Windows command-shim fallback is fixed and timeout remains bounded',()=>{
   if(process.platform!=='win32')return;
-  probe=(command)=>{if(command==='agy')throw Object.assign(new Error('cmd shim'),{code:'ENOENT'});return '["hydrogen"]';};
+  const cmd = process.env.ComSpec || 'cmd.exe';
+  probe=(command)=>{if(command===cmd)throw Object.assign(new Error('cmd shim'),{code:'ENOENT'});return '["hydrogen"]';};
   assert(lib.detectModelCapabilities(base('windows-shim')).hasHydrogen);
-  assert.equal(calls.length,2);assert.deepEqual(calls[1][1],['/d','/s','/c','agy.cmd models']);assert(calls[1][2].timeout>0&&calls[1][2].timeout<=2500);
+  assert.equal(calls.length,2);assert.deepEqual(calls[0][1],['/d','/s','/c','agy.cmd models']);assert.equal(calls[1][0],'agy');assert(calls[0][2].timeout>0&&calls[0][2].timeout<=5500);
   calls=[];probe=()=>{throw Object.assign(new Error('timeout'),{code:'ETIMEDOUT'});};lib.detectModelCapabilities(base('windows-timeout'),true);assert.equal(calls.length,1);
 });
 
@@ -103,7 +104,14 @@ await test('damaged cache recovers and probe is timeout bounded',()=>{
   fs.mkdirSync(STATE,{recursive:true});fs.writeFileSync(lib.CAPABILITIES_FILE,'{broken');
   const result=lib.detectModelCapabilities(base('broken'));
   assert.equal(result.hasHydrogen,true);assert.equal(result.source,'cli');
-  assert.equal(calls[0][0],'agy');assert.deepEqual(calls[0][1],['models']);assert.equal(calls[0][2].timeout,2500);
+  const expectedCmd = process.platform === 'win32' ? (process.env.ComSpec || 'cmd.exe') : 'agy';
+  assert.equal(calls[0][0],expectedCmd);
+  if (process.platform === 'win32') {
+    assert.deepEqual(calls[0][1],['/d','/s','/c','agy.cmd models']);
+  } else {
+    assert.deepEqual(calls[0][1],['models']);
+  }
+  assert.equal(calls[0][2].timeout,5500);
   assert.deepEqual(calls[0][2].stdio,['ignore','pipe','ignore']);assert.equal(calls[0][2].encoding,'utf8');
 });
 await test('CLI JSON object rows filter unavailable entitlements',()=>{
@@ -118,10 +126,53 @@ await test('availableModels lists and ANSI text model lists are parsed',()=>{
     assert(result.hasHydrogen);assert(result.hasCarbon);assert.equal(result.hasArgon,false);assert.equal(result.hasFlash,false);
   }
 });
-await test('Hydrogen ACL uses legal flash by default and supports an explicit host-specific ID',()=>{
-  cache();assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
-  process.env.PRO_HYDROGEN_ID='gemini-4-hydrogen';assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'gemini-4-hydrogen');
-  process.env.PRO_HYDROGEN_ID='flash';assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');process.env.PRO_HYDROGEN_ID='';
+await test('parseAvailableModels parses real agy models output with tabs and header lines',()=>{
+  const realOutput = 'Fetching available models...\n' +
+    'gemini-4-argon-medium\tGemini 4 Argon (Medium)\n' +
+    'gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)\n' +
+    'gemini-pro-orchestrator-g1-pro\tOrchestrator (Argon)\n' +
+    'gemini-3.8-flash-high\tGemini 3.8 Flash (High)';
+  probe = () => realOutput;
+  const result = lib.detectModelCapabilities(base('real-agy-models'), true);
+  assert(result.hasHydrogen);
+  assert(result.hasArgon);
+  assert(result.hasFlash);
+  assert.equal(result.hasCarbon, false);
+  assert(result.availableModels.includes('gemini-4-hydrogen-medium'));
+  assert(result.availableModels.includes('gemini-4-argon-medium'));
+  assert(result.availableModels.includes('gemini-pro-orchestrator-g1-pro'));
+  assert(result.availableModels.includes('gemini-3.8-flash-high'));
+});
+await test('Hydrogen ACL uses legal flash by default and enforces INVOCABLE_SUBAGENT_MODELS enum protection',()=>{
+  cache();
+  assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
+  // Non-enum PRO_HYDROGEN_ID or PRO_SELF_MODEL falls back to flash on Argon main
+  for(const nonEnum of ['gemini-4-hydrogen-medium','custom-hydrogen','gemini-4-hydrogen']) {
+    process.env.PRO_HYDROGEN_ID=nonEnum;
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
+    process.env.PRO_HYDROGEN_ID='';
+    process.env.PRO_SELF_MODEL=nonEnum;
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
+    process.env.PRO_SELF_MODEL='';
+  }
+  // Non-enum falls back to inherit on Hydrogen main session
+  const hydrogenPayload = base('worker-h', {modelName:'Gemini 4 Hydrogen (Medium)'});
+  process.env.PRO_HYDROGEN_ID='gemini-4-hydrogen-medium';
+  assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
+  process.env.PRO_HYDROGEN_ID='';
+  process.env.PRO_SELF_MODEL='custom-hydrogen';
+  assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
+  process.env.PRO_SELF_MODEL='';
+
+  // Legal enum values take effect under antigravity
+  for(const legal of ['flash_lite','flash','pro','inherit']) {
+    process.env.PRO_HYDROGEN_ID=legal;
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),legal);
+    process.env.PRO_HYDROGEN_ID='';
+    process.env.PRO_SELF_MODEL=legal;
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),legal);
+    process.env.PRO_SELF_MODEL='';
+  }
 });
 await test('Hydrogen mains inherit under either model field even with an explicit cached ACL denial',()=>{
   for(const hasHydrogen of [true,false]) {
@@ -208,7 +259,25 @@ await test('Flash children and other harnesses never receive relaxed strategy or
 });
 await test('task and common overrides preserve priority across harnesses',()=>{
   cache();process.env.PRO_WORKER_MODEL='common';process.env.PRO_RESEARCH_MODEL='research';process.env.PRO_SELF_MODEL='self';
-  try {for(const harness of ['antigravity','codex','claude']){assert.equal(lib.targetWorkerModel(harness,'research'),'research');assert.equal(lib.targetWorkerModel(harness,'self'),'self');assert.equal(lib.targetWorkerModel(harness),'common');}}
+  try {
+    for(const harness of ['codex','claude']){
+      assert.equal(lib.targetWorkerModel(harness,'research'),'research');
+      assert.equal(lib.targetWorkerModel(harness,'self'),'self');
+      assert.equal(lib.targetWorkerModel(harness),'common');
+    }
+    // In antigravity, non-enum strings are safely filtered out and fall back to flash/inherit
+    assert.equal(lib.targetWorkerModel('antigravity','research'),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','self'),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity'),'flash');
+  }
+  finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
+  // Legal enum values take effect under antigravity
+  process.env.PRO_WORKER_MODEL='flash_lite';process.env.PRO_RESEARCH_MODEL='pro';process.env.PRO_SELF_MODEL='flash_lite';
+  try {
+    assert.equal(lib.targetWorkerModel('antigravity','research'),'pro');
+    assert.equal(lib.targetWorkerModel('antigravity','self'),'flash_lite');
+    assert.equal(lib.targetWorkerModel('antigravity'),'flash_lite');
+  }
   finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
   assert.equal(lib.targetWorkerModel('codex'),'gpt-5-mini');assert.equal(lib.targetWorkerModel('claude'),'haiku');
 });
@@ -263,7 +332,17 @@ await test('startup fallback and relaxed cards match effective Worker and limits
   const relaxed=hook('session-start.mjs',base('start-relaxed',{modelName:'Flash'}));assert.match(message(relaxed),/flash-main-relaxed/);assert.match(message(relaxed),/最多 4/);assert.match(message(relaxed),/最多 6/);assert.equal(lib.readSession('start-relaxed').maxReadsAllowed,6);
 });
 await test('startup honors research and self overrides in injected parameters',()=>{
-  cache();const out=hook('session-start.mjs',base('overrides'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'custom-hydrogen'});assert.match(message(out),/custom-hydrogen/);assert.match(message(out),/Model=\\"flash\\"/);assert.equal(probeCount(),0);
+  cache();
+  // Valid enum override takes effect
+  const out=hook('session-start.mjs',base('overrides'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'flash_lite'});
+  assert.match(message(out),/flash_lite/);
+  assert.match(message(out),/Model=\\"flash\\"/);
+  assert.equal(probeCount(),0);
+  // Non-enum override safely falls back to flash under antigravity without exposing invalid model enum
+  const fallback=hook('session-start.mjs',base('overrides-fallback'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'custom-hydrogen'});
+  assert(!message(fallback).includes('custom-hydrogen'));
+  assert.match(message(fallback),/Model=\\"flash\\"/);
+  assert.equal(probeCount(),0);
 });
 await test('disabled, child, Claude and Codex starts never run AGY probes',()=>{
   hook('session-start.mjs',base('off'),{PRO_MODE:'off'});

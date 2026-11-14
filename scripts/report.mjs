@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * report.mjs — summarize real guard decisions and estimated context savings (v0.6.1).
+ * report.mjs — summarize real guard decisions and estimated context savings (v0.7.0).
  *
  * Doctor runs tag their entries with ARGON_TEST=1, so this report only shows
  * production decisions. Use it to tune thresholds with data instead of guesses.
@@ -101,7 +101,12 @@ export function estimateContextSavings(rows) {
 export function denyLabel(r) {
   const reason = String(r.reason || '');
   const file = r.base || r.path || '?';
-  if (r.hook === 'guard-command') return r.command || '命令';
+  if (r.hook === 'guard-command') {
+    if (r.rule === 'thrash-circuit-breaker' || /死循环熔断/.test(String(r.reason || ''))) {
+      return `${r.command || '命令'} (死循环熔断)`;
+    }
+    return r.command || '命令';
+  }
   if (r.hook === 'guard-subagent') {
     if (r.subAction === 'list' || /轮询|manage_subagents.*list/.test(reason)) return '轮询拦截 (manage_subagents:list)';
     if (/状态锁|写入失败/.test(reason)) return '派单状态更新失败';

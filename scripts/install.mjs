@@ -6,6 +6,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ROOT_DIR, runtimeEntries, readProjectFile, renderInstallReadme } from './runtime-files.mjs';
 
+function sameFileContent(existing, next) {
+  if (existing.equals(next)) return true;
+  if (existing.includes(0) || next.includes(0)) return false;
+  return existing.toString('utf8').replace(/\r\n/g, '\n') === next.toString('utf8').replace(/\r\n/g, '\n');
+}
+
 function checkParents(target, file) {
   let current = target;
   for (const part of ['', ...file.split('/')]) {
@@ -46,7 +52,7 @@ export function installRuntime(target, { platform = 'antigravity', dryRun = fals
   });
   let changed = 0;
   for (const file of prepared) {
-    if (fs.existsSync(file.target) && fs.readFileSync(file.target).equals(file.content)) continue;
+    if (fs.existsSync(file.target) && sameFileContent(fs.readFileSync(file.target), file.content)) continue;
     changed += 1;
     if (dryRun) continue;
     fs.mkdirSync(path.dirname(file.target), { recursive: true });

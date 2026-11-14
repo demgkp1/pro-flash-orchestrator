@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
-  "displayName": "Pro Architect + Flash Worker (v0.6.1)",
-  "version": "0.6.1",
+  "displayName": "pro-flash-orchestrator",
+  "version": "0.7.0",
   "license": "MIT",
-  "description": "v0.6.1 Pro 主控与轻量助手分流：原生 Orchestrator Lite Guard Mode、动态 Audit 切片配额、AGY 能力探测与安全路由、父子命令轨迹、同批源码互斥锁与上下文省流估算。Codex 保留真实模型验证与独立状态存储；原生闭环与 Claude Code 仍待真实验收。",
+  "description": "v0.7.0 Pro 主控与轻量助手分流：零阻塞后台更新检测与免 Git 一键升级（update.mjs）、子代理死循环熔断器（Thrashing Circuit Breaker）、原生 Orchestrator Lite Guard Mode、动态 Audit 切片配额、AGY 能力探测与枚举安全路由、同批源码互斥锁与上下文省流估算。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",

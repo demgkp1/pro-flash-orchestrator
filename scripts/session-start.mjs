@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v0.6.1)
+ * SessionStart hook (v0.7.0)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -11,14 +11,14 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { PLUGIN_DIR, currentMode, detectModelCapabilities, getHarness, isNativeOrchestrator, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, setContext, targetWorkerModel, updateSession } from './lib.mjs';
+import { PLUGIN_DIR, currentMode, detectModelCapabilities, getHarness, isNativeOrchestrator, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, readUpdateNotice, setContext, targetWorkerModel, updateSession } from './lib.mjs';
 
 const RULES = '[Pro-Flash Orchestrator Active]';
 const DOCTOR = fs.existsSync(path.join(PLUGIN_DIR, 'scripts', 'doctor.mjs'))
   ? 'node scripts/doctor.mjs' : '在维护工程运行 node scripts/doctor.mjs';
 
 const CARD = [
-  '**Pro-Flash Orchestrator v0.6.1 已接管本会话**',
+  '**Pro-Flash Orchestrator v0.7.0 已接管本会话**',
   '',
   '| 守门 | 行为 |',
   '| --- | --- |',
@@ -67,10 +67,17 @@ if (mode === 'off') {
       .replace(/\| 写入守门 \|[^\n]+/, '| 写入守门 | Flash 主模型可直改最多 4 个源码文件 |')
       .replace(/\| 读取守门 \|[^\n]+/, '| 读取守门 | Flash 主模型可读取最多 6 个文件；保留大文件与 Audit 切片保护 |');
   }
-  const routing = `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")。`;
+  const isHydrogen = strategy === 'hydrogen-main' || worker === 'inherit';
+  const routing = isHydrogen
+    ? `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="inherit")（继承主会话的 Gemini 4 Hydrogen）。`
+    : `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")。`;
   const policy = native ? 'Lite Guard Mode：文件数量限制豁免，保留切片、命令、防嵌套与派单契约。'
     : `主模型普通读取配额 ${reads} 个文件，源码直改上限 ${writes} 个文件；Audit 切片额度另行计算。`;
   card += `\n\n${routing}\n\n${policy}`;
+  const updateNotice = readUpdateNotice(payload);
+  if (updateNotice) {
+    card += `\n\n---\n🔔 **发现新版本 v${updateNotice.latestVersion}**（当前 v${updateNotice.currentVersion}）：终端运行 \`${updateNotice.updateCommand}\` 一键更新精简包，或[前往 Releases 下载覆盖](${updateNotice.releaseUrl})`;
+  }
   logDecision({ hook: 'session-start', action: mode === 'shadow' ? 'shadow-pass' : 'inject', mode, strategy, worker });
   if (mode === 'shadow') {
     output({});
@@ -86,7 +93,7 @@ if (mode === 'off') {
             // whole hook result (verified against language_server 2026-11-06).
             // renderInfo is the supported way to render a card to the user.
             renderInfo: {
-              title: 'Pro-Flash Orchestrator v0.6.1',
+              title: 'Pro-Flash Orchestrator v0.7.0',
               titlePrefix: native ? '轻量护栏' : relaxed ? '宽松策略' : '已接管',
               markdown: card,
             },
