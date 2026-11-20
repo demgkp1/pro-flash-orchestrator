@@ -29,7 +29,8 @@ const SPAWN_TTL_MS = 10 * 60 * 1000;
 export const CAPABILITIES_FILE = path.join(STATE_DIR, 'capabilities.json');
 const CAPABILITIES_LOCK = `${CAPABILITIES_FILE}.lock`;
 export const UPDATE_CHECK_FILE = path.join(STATE_DIR, 'update-check.json');
-export const UPDATE_CHECK_TTL_MS = 24 * 60 * 60 * 1000;
+export const UPDATE_CHECK_TTL_MS = 4 * 60 * 60 * 1000;
+export const UPDATE_RETRY_COOLDOWN_MS = 5 * 60 * 1000;
 export const PLUGIN_VERSION = (() => {
   try {
     const manifest = JSON.parse(fs.readFileSync(path.join(PLUGIN_DIR, 'plugin.json'), 'utf8'));
@@ -367,12 +368,14 @@ export function readUpdateNotice(payload = CTX, {
     }
 
     const checkedAt = Number(data?.checkedAt || 0);
+    const lastAttemptAt = Number(data?.lastAttemptAt || 0);
     const expired = !checkedAt || now - checkedAt > UPDATE_CHECK_TTL_MS;
-    if (expired) {
+    const attemptCoolingDown = lastAttemptAt > 0 && now - lastAttemptAt < UPDATE_RETRY_COOLDOWN_MS;
+    if (expired && !attemptCoolingDown) {
       fs.mkdirSync(path.dirname(checkFile), { recursive: true });
       const stamp = {
         ...(data || {}),
-        checkedAt: now,
+        lastAttemptAt: now,
         currentVersion,
       };
       safeWriteFileSync(checkFile, JSON.stringify(stamp, null, 2));

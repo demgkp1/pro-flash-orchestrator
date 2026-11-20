@@ -118,8 +118,8 @@ try {
     );
     assert.equal(noticeCodex, null, 'codex harness should receive null update notice');
 
-    // 5. When cache is expired (checkedAt was 25 hours ago) -> auto refreshes checkedAt
-    const oldCheckedAt = Date.now() - 25 * 60 * 60 * 1000;
+    // 5. When cache is expired (checkedAt was 5 hours ago) -> records lastAttemptAt without faking checkedAt
+    const oldCheckedAt = Date.now() - 5 * 60 * 60 * 1000;
     fs.writeFileSync(checkFile, JSON.stringify({
       checkedAt: oldCheckedAt,
       currentVersion: '0.6.1',
@@ -131,7 +131,8 @@ try {
     );
     assert(noticeExpired !== null, 'notice should still be returned from expired cache data');
     const refreshedCache = JSON.parse(fs.readFileSync(checkFile, 'utf8'));
-    assert(refreshedCache.checkedAt > oldCheckedAt, 'checkedAt must be refreshed on expiration');
+    assert.equal(refreshedCache.checkedAt, oldCheckedAt, 'checkedAt must only be updated by worker on success');
+    assert(refreshedCache.lastAttemptAt > oldCheckedAt, 'lastAttemptAt must be recorded on expiration');
   });
 
   // --------------------------------------------------------------------------
