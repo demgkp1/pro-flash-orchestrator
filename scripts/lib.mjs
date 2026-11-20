@@ -453,7 +453,7 @@ function modelNames(payload) {
 }
 
 function hasGemini4Model(payload) {
-  return modelNames(payload).some((name) => /argon|carbon|hydrogen|orchestrator/i.test(name));
+  return modelNames(payload).some((name) => /neon|argon|carbon|hydrogen|orchestrator/i.test(name));
 }
 
 // Unlike isSubAgent(), this role check never persists identity. Capability
@@ -488,6 +488,7 @@ function cachedCapabilities() {
     if (!data || typeof data !== 'object' || typeof data.hasHydrogen !== 'boolean') return null;
     return {
       ...data,
+      hasNeon: data.hasNeon === true,
       hasArgon: data.hasArgon === true,
       hasCarbon: data.hasCarbon === true,
       hasFlash: data.hasFlash === true,
@@ -503,6 +504,7 @@ function inferredCapabilities(payload) {
     detectedAt: 0,
     agyPpid: process.ppid,
     hasHydrogen: hasGemini4Model(payload),
+    hasNeon: names.some((name) => /neon/i.test(name)),
     hasArgon: names.some((name) => /argon|orchestrator/i.test(name)),
     hasCarbon: names.some((name) => /carbon/i.test(name)),
     hasFlash: true,
@@ -544,7 +546,7 @@ function parseAvailableModels(text) {
     return [...new Set(clean.split(/\r?\n/)
       .filter((line) => !/unavailable|not available|disabled|denied|no access|无权限|不可用|未授权/i.test(line))
       .flatMap((line) => line.match(/\b[a-z0-9][a-z0-9._:/-]*\b/gi) || [])
-      .filter((name) => /hydrogen|argon|carbon|orchestrator|flash/i.test(name)))].slice(0, 128);
+      .filter((name) => /neon|hydrogen|argon|carbon|orchestrator|flash/i.test(name)))].slice(0, 128);
   }
 }
 
@@ -581,6 +583,7 @@ export function detectModelCapabilities(payload = CTX, force = false) {
       if (models.length === 0) throw new Error('No models parsed from agy output');
       capabilities = {
         hasHydrogen: models.some((name) => /hydrogen/i.test(name)),
+        hasNeon: models.some((name) => /neon/i.test(name)),
         hasArgon: models.some((name) => /argon|orchestrator/i.test(name)),
         hasCarbon: models.some((name) => /carbon/i.test(name)),
         hasFlash: models.some((name) => /flash/i.test(name)),

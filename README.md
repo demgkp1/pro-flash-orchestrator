@@ -1,45 +1,27 @@
 # Pro-Flash Orchestrator
 
-A lifecycle-hook orchestration engine for Google Antigravity, with an independently packaged Codex adapter.
+A lifecycle-hook orchestration engine for Google Antigravity, with an independently packaged Codex adapter and Claude Code hook template.
 
-Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. It keeps the flagship model focused on core decisions and benchmark implementations while offloading peripheral implementation, tests, and exploration to a verified lightweight worker. Antigravity is the established runtime; v0.7.0 includes a separately installed Codex integration under staged native acceptance.
+Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. It keeps the flagship model (Pro) focused on architectural decisions and benchmark implementations while offloading exploration, peripheral expansion, and tests to a lightweight worker (Flash / Hydrogen) via deterministic physical hooks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.0-lightgrey.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
-[![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex-lightgrey.svg)](#)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#)
+[![Version](https://img.shields.io/badge/Version-v0.7.1-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#multi-platform-support--acceptance-status)
+[![Tests](https://img.shields.io/badge/Offline%20Suites-7%20Passed-green.svg)](#diagnostics--tests)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
 ---
 
-## Design Rationale
+## Core Positioning & Sandwich Collaboration
 
-In long-running pair programming sessions, relying solely on a flagship model (Pro) leads to two common bottlenecks:
+Relying solely on a flagship model in long-running sessions causes two bottlenecks: **quota depletion** on routine engineering and **context window degradation** from unbounded file dumps. Soft prompt instructions inevitably drift as context grows. Pro-Flash Orchestrator enforces physical checks and parameter rewrites at `SessionStart`, `PreInvocation`, and `PreToolUse`.
 
-1. Quota & Budget Depletion: Expensive reasoning tokens are expended on boilerplate CRUD, repetitive data transforms, and writing extensive test suites.
-2. Context Window Degradation: Unbounded dumps (such as direct `cat` calls or unsliced reads of massive files) saturate the context window, degrading subsequent reasoning performance.
+### Sandwich Collaboration Workflow (`/flash-dev`)
 
-Soft guidelines embedded in system prompts ("please delegate routine work") frequently fail as context grows and prompt drift occurs. Pro-Flash Orchestrator introduces Antigravity lifecycle hooks that enforce hard physical checks and parameter rewrites at tool execution (`PreToolUse`), model invocation (`PreInvocation`), and session startup (`SessionStart`).
-
----
-
-## v0.7.0 guard updates
-
-v0.7.0 introduces non-blocking background update checks and git-free one-click runtime updates, adds the subagent Thrashing Circuit Breaker, and hardens AGY model capability detection and model enum safety:
-
-- **Non-blocking Update Checks & In-place Updater**: `check-update-worker.mjs` runs asynchronously during `SessionStart` and caches GitHub Releases metadata to `.state/update-check.json`, introducing zero network delay to session startup. New versions surface via transient UI cards; setting `PRO_NO_UPDATE_CHECK=1` completely disables update checks. Pre-packaged Release users can upgrade in-place without Git by executing `node "<install-directory>/scripts/update.mjs"`, which pulls the latest minimal release archive, validates boundary security, and 100% preserves user `.state/` configuration and telemetry. Offline upgrades via `--zip <path>` and preview with `--dry-run` are fully supported.
-- **Subagent Thrashing Circuit Breaker**: Prevents subagents from endlessly retrying failing commands. In `guard-command.mjs`, consecutive executions of the exact same command within the same subagent task are counted. When reaching `PRO_THRASH_LIMIT` (default 3, representing 2 failed retries), a physical `deny` is issued, terminating the retry loop and mandating that the subagent report the error in a 4-column table for the Pro lead architect to resolve.
-- **AGY Probe Timeout & Subagent Model Safety**: The startup `agy models` probe timeout is relaxed to 5500ms; on Windows, it executes `cmd.exe /c agy.cmd models` directly to eliminate `.cmd` execution failures and secondary timeout cascades. The `INVOCABLE_SUBAGENT_MODELS` validator guarantees that subagent worker models only evaluate to legal Antigravity enums (`inherit`, `flash_lite`, `flash`, `pro`), rejecting illegal IDs from environment variables.
-- **PowerShell Aliases & Session Stability**: `guard-command.mjs` recognizes the PowerShell `select` alias (`Select-Object`) for pipeline slicing (`-First`/`-Last`) and read-only inspection. Child command recording uses `sessionExists` to prevent creating empty skeleton parent session state files. `scripts/install.mjs` normalizes CRLF and LF line endings during file comparison to eliminate spurious overwrites.
-- **Established v0.6 Guards Preserved**: Preserves Hydrogen worker inheritance (`inherit`), Flash main relaxed policy (`flash-main-relaxed`), native Orchestrator Lite Guard Mode, atomic same-batch file mutex locks with parent session locking, turn-based audit slice budgets (≤80 lines), recursion/polling blocks, and context savings telemetry in `report.mjs`.
-
-## Collaboration Model
-
-### Universal Scale-Based Offloading (Applicable to all languages, frameworks, and domains)
-- **Exploration & Review (≥3 files or massive docs/code)**: Dispatches `research (flash)` to extract structured summaries and exact line ranges; denies concurrent unguided slicing by the host model.
-- **Implementation & Refactoring (>50 lines or ≥2 files)**: Pro directly commits core benchmark architecture/algorithms and dispatches `self (flash)` in the same turn for peripheral expansion and regression tests.
-- **Surgical Single-Point Fixes (≤50 lines, ≤2 known files)**: Pro directly slices and edits (prevents delegation latency and communication overhead).
+1. **Explore**: For unknown codebases, ≥3 files, or long docs/code, dispatch `research` to extract structured summaries and exact line ranges.
+2. **Benchmark + Concurrent Fan-out**: Pro implements core schemas, algorithms, or benchmark files (≤2 files), and dispatches `self` subagents in the **same turn** for peripheral modules and unit tests.
+3. **Audit Verification**: Upon receiving the 4-column completion table, Pro checks `git status --porcelain` and inspects 20–60 line slices using the Audit dynamic slice budget.
 
 ```text
 [ User Prompt / /flash-dev ]
@@ -47,295 +29,211 @@ v0.7.0 introduces non-blocking background update checks and git-free one-click r
             ▼
 ┌────────────────────────────────────────┐
 │        Pro Lead Architect (Flagship)   │
-│  - Universal: code/review/debug/docs   │
-│  - Core benchmark & algorithm design   │
-│  - Dispatches sub-agents in same turn  │
+│  - Core architecture & benchmark (≤2)  │
+│  - Same-turn concurrent fan-out (≤5)   │
 └───────────────────┬────────────────────┘
                     │ invoke_subagent / define_subagent
                     ▼
 ┌────────────────────────────────────────┐
-│     Runtime Hook Interception Guards   │
-│  - Worker routing from startup data    │
-│    Hydrogen -> inherit; others -> flash│
+│     Physical Lifecycle Hook Guards     │
+│  - AGY v1.5.11+ tier alias routing     │
 │  - Injects [FLASH-WORKER] & contract   │
-│  - Anti-recursion & anti-polling       │
-│  - Read/Write guards: slices & limits  │
+│  - Read/Write limits & batch mutex     │
+│  - Anti-recursion, anti-polling, breaker│
 └───────────────────┬────────────────────┘
                     │
                     ▼
 ┌────────────────────────────────────────┐
 │        Worker (Hydrogen / Flash)       │
-│  - Explores and expands assigned files │
-│  - Runs verification commands directly │
-│  - Replies strictly with 4-column table│
+│  - Explores or expands disjoint files  │
+│  - Runs targeted local verification    │
+│  - Replies with 4-column table only    │
 └───────────────────┬────────────────────┘
                     │ Response
                     ▼
 ┌────────────────────────────────────────┐
 │         Pro Audit & Verification       │
-│  - Reviews git status range            │
-│  - Inspects 20-60 line slices by index │
+│  - Checks git status & Audit slices    │
 └────────────────────────────────────────┘
 ```
 
 ---
 
-## Physical Guard Matrix
+## What's New in v0.7.1
 
-| Guard System | Hook Target | Enforcement Policy | Practical Benefit |
-| :--- | :--- | :--- | :--- |
-| **Role & Card Setup** | `SessionStart` | Injects universal governance rules once at session start; status card is emitted via `renderInfo` to the UI layer. Automatically skips role injection for sub-agents. | Status card consumes 0 model tokens and leaves no residue in the context window. |
-| **Worker Model Routing** | `PreToolUse` (`invoke_subagent`) | Startup capabilities and the main model select legal worker parameters: Hydrogen main sessions use `inherit`, other main sessions default to `flash`. Task overrides take precedence; native Orchestrator routing and explicit `[FORCE-PRO]` selections are preserved. | Uses the best available worker through host-compatible parameters. |
-| **Write Guard & Benchmark Limit** | `PreToolUse` (`write_file`, `edit_file`, etc.) | Tracks `writesSinceDispatch`: the strict main policy permits two source files, while `flash-main-relaxed` permits four. Further distinct files require delegation. Child sessions bypass the main quota; artifacts and build/dependency paths are exempt. | Keeps benchmark work focused and delegates peripheral edits. |
-| **Batch File Ownership** | `PreToolUse` (source writes and `apply_patch`) | Atomically checks and claims all normalized targets in the parent's `batchFileClaims`. The same child may retry; another child's claim causes a deny. New batches or audit IDs release claims; same-batch dispatches retain them. | Prevents parallel subagents from overwriting each other's edits. |
-| **Cold-Start, Recursion & Anti-Polling** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 1. **Evidence-based identity**: Requires parent metadata, a worker transcript or a cold-start contract marker. Recent spawns alone never identify a session; claims must match an explicit parent;<br>2. **Anti-Recursion**: Strictly denies nested subagent delegation (`deny`);<br>3. **Anti-Polling**: Denies host calls to `manage_subagents(Action="list")` (`deny`), preventing wasteful polling tokens and out-of-order race conditions; instructs agent to wait for reactive notification (`Action="kill"` allowed). | Prevents recursion deadlocks, race conditions, and wasted token cycles during async subagent execution. |
-| **Neutral Contract & Subagent Definition** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | Appends `[FLASH-WORKER]` and `[PRO-CONTRACT]`: implementation workers must return a 4-column table with test output; `research` workers must return structured summaries without file writes. Injects contract into `define_subagent` SystemPrompt. Falls back safely to absolute path `~/.gemini/antigravity/brain/<convId>` if `artifactDirectoryPath` is missing. | Prevents source code pasting, avoids file-write errors in read-only sandboxes, and prevents workspace pollution. |
-| **Sliced Multi-Read & Flood Guard** | `PreToolUse` (`read_file`, `view_file`) | 1. **Smart Slicing**: Unsliced reads of 300–800 line code files are clamped to [1, 150]; code >800 lines or docs >400 lines are denied;<br>2. **Minified Flood Guard**: Files >40KB with average line length >4KB are blocked;<br>3. **Sliced Multi-Read Guard**: Tracks `readsSinceDispatch`; attempting to read a 4th distinct source/doc file via slicing triggers a hard deny, mandating `research (flash)`. Dependency & artifact paths exempt. | Eliminates single-line minified dumps and context saturation; completely blocks multi-file slice-reading workarounds. |
-| **Enhanced Dump Guard & Thrashing Breaker** | `PreToolUse` (`run_command`) | Unwraps multi-layer shells; splits pipelines; blocks unbounded `git log` and `cat`/`Get-Content` on files >400KB. Intercepts shell dumps across variable assignments (`$content = Get-Content`), sub-expressions (`Resolve-Path`), and .NET static methods (`[IO.File]::ReadAllText`). Allows file redirections (`>`, `>>`, `| Set-Content`, `> /dev/null`). Recognizes PowerShell `select` alias. **Thrashing Circuit Breaker**: Tracks consecutive executions of identical failing commands by subagents; triggers a physical hard deny at `PRO_THRASH_LIMIT` (default 3) to break retry loops and mandate Pro architect takeover. | Prevents terminal flooding and context pollution; stops wasteful subagent retry loops and enforces timely escalation. |
-| **Turn-Boundary Wakeup & Deduplicated Drift** | `PreInvocation` | 1. **Turn-Boundary Wakeup**: In long conversations (`globalStep >= 8`), injects a transient 1-line `ephemeralMessage` at the start of new user turns to awaken the architect's dispatch discipline;<br>2. **Deduplicated Drift Warning**: Evaluates deduplicated and exempt-filtered `readsSinceDispatch` and `writesSinceDispatch`, alerting when consecutive reads/writes occur without delegation;<br>3. **Precision Filtering**: Applies relaxed thresholds to Flash main sessions and skips count nudges for native Orchestrator; parses AST/JSONL toolCall structures to eliminate false positives. | Zero context footprint, combining proactive turn wakeups with precision drift alerts to maintain architect discipline. |
+- **Gemini 4 Neon & Native Orchestrator Support**: Full recognition of `Gemini 4 Neon` (`gemini-4-neon-low/medium/high/xhigh`, the default primary model for Pro/Ultra/Enterprise) alongside `Argon` / `Carbon` / `Hydrogen`, plus `Orchestrator (Neon)` and `Orchestrator (Argon)` as native orchestrator entry points (auto-enabling `Lite Guard Mode`).
+- **AGY v1.5.11+ Official Tier Mapping**: `invoke_subagent` uniformly routes via legal tier aliases: `flash` → `Gemini 4 Hydrogen High`, `pro` under `[FORCE-PRO]` → `Gemini 4 Hydrogen XHigh`, and `inherit` in Hydrogen main sessions → inherits Hydrogen.
+- **Git-free One-Click Upgrade & Zero-Blocking Update Check**: `check-update-worker.mjs` asynchronously checks GitHub Releases on `SessionStart` (cached in `.state/update-check.json`, zero startup latency; disable via `PRO_NO_UPDATE_CHECK=1`). Release users can upgrade in-place without Git via `node "<install-dir>/scripts/update.mjs"` while 100% preserving `.state/`.
+- **Subagent Thrashing Circuit Breaker**: `guard-command.mjs` tracks consecutive identical commands per subagent task; hitting `PRO_THRASH_LIMIT` (default `3`, minimum `2`) triggers a physical `deny` and forces escalation back to Pro.
 
 ---
 
-## Platform packages and installation
+## Quick Install & Git-free Upgrade
 
-v0.7.0 publishes two independent release assets:
+v0.7.1 publishes two independent release assets:
 
-- `pro-flash-orchestrator-antigravity-v0.7.0.zip`, rooted at `pro-flash-orchestrator/`.
-- `pro-flash-orchestrator-codex-v0.7.0.zip`, rooted at `pro-flash-orchestrator-codex/` and containing the standalone marketplace plugin at `plugins/pro-flash-orchestrator/`.
+- `pro-flash-orchestrator-antigravity-v0.7.1.zip` (rooted at `pro-flash-orchestrator/`)
+- `pro-flash-orchestrator-codex-v0.7.1.zip` (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
 
-### Antigravity
+### Option 1: Git-free Online / Offline Upgrade (Release Users)
 
-#### Option 1: Git-free One-click Online Update (Recommended for Release Users)
-
-Users who installed from release packages can update in-place without Git or maintaining a source clone:
-
-```powershell
+```bash
+# Online upgrade (fetches latest pro-flash-orchestrator-antigravity-v*.zip, preserves .state/)
 node "<install-directory>/scripts/update.mjs"
+
+# Offline upgrade from a local ZIP archive
+node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.1.zip"
+
+# Preview changes without writing
+node "<install-directory>/scripts/update.mjs" --dry-run
 ```
 
-The updater fetches the latest minimal release archive (`pro-flash-orchestrator-antigravity-v*.zip`) from GitHub Releases, verifies path boundaries against symlink attacks, overwrites runtime files, and 100% preserves your `.state/` settings, mode, and telemetry history.
-- Offline update using a downloaded archive:
-  ```powershell
-  node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.0.zip"
-  ```
-- Use `--dry-run` to preview file changes without writing to disk.
+### Option 2: Install from Source Checkout (Antigravity)
 
-#### Option 2: Deployment from Source / Maintenance Checkout
-
-Keep Git history, tests, and release tooling in a maintenance checkout. Deploy only allowlisted runtime files into Antigravity:
-
-```powershell
-git clone https://github.com/demgkp1/pro-flash-orchestrator.git "E:\Edoc\Projects\pro-flash-orchestrator"
-cd "E:\Edoc\Projects\pro-flash-orchestrator"
+```bash
+git clone https://github.com/demgkp1/pro-flash-orchestrator.git ~/Projects/pro-flash-orchestrator
+cd ~/Projects/pro-flash-orchestrator
 node scripts/install.mjs
 ```
 
-On macOS or Linux, use any separate maintenance path such as `~/Projects/pro-flash-orchestrator`. The default install target is `.gemini/config/plugins/pro-flash-orchestrator` in the user home directory. Use `--target <install-directory>` to override it and `--dry-run` to preview deployment. The installer preserves `.state/` and excludes maintenance files.
+- Default install target: `~/.gemini/config/plugins/pro-flash-orchestrator` (override with `--target <dir>`, preview with `--dry-run`).
+- Only allowlisted runtime files from `runtime-files.json` are deployed; `.state/` is preserved and Git/test/CI files are excluded.
 
-### Codex standalone local marketplace
+---
 
-Extract the Codex ZIP, enter its marketplace root, and run:
+## Core Guard Mechanisms & Policies
+
+### Main Session Policies
+
+| Policy | Trigger | Read Quota | Write Quota | Behavior |
+| :--- | :--- | :--- | :--- | :--- |
+| **Standard Main** | Flagship models (`Neon`, `Argon`, `Carbon`) | **3** distinct files | **2** source files | Enforces strict benchmark limits and dispatches workers for ≥3 reads or >2 writes. |
+| **Flash Main Relaxed** | `flash-main-relaxed` (Flash main session) | **6** distinct files | **4** source files | Relaxes count thresholds for lightweight main sessions while keeping slice/flood/contract guards. |
+| **Lite Guard Mode** | `Orchestrator (Neon)` / `Orchestrator (Argon)` or `PRO_NATIVE_ORCHESTRATOR=1` | Count exempt | Count exempt | Exempts main read/write count blocks and count drift nudges; retains oversized file slicing, anti-recursion, anti-polling, dispatch contracts, command guards, and subagent file mutex locks. |
+
+### Physical Guard Matrix
+
+| Guard | Hook | Enforcement & Benefit |
+| :--- | :--- | :--- |
+| **Role & Card Setup** | `SessionStart` | Injects rules once per main session (skipped for subagents); emits zero-token UI status card via `renderInfo`. |
+| **Worker Model Routing** | `PreToolUse` (`invoke_subagent`) | Validates legal enums (`inherit`, `flash_lite`, `flash`, `pro`) and routes per AGY `v1.5.11+` tier mapping (`Hydrogen` → `inherit`; others → `flash`; `[FORCE-PRO]` → `pro`). |
+| **Audit Dynamic Slice Budget** | `PreToolUse` (`read_file`, `view_file`) | Each `self` dispatch grants **+2** slice audit credits (capped at **10**). Explicit line ranges ≤80 lines consume audit credits first, allowing Pro to verify multiple worker-edited files without hitting the normal read quota; resets on a new user turn. |
+| **Sliced Multi-Read & Flood Guard** | `PreToolUse` (`read_file`, `view_file`) | Unsliced 300–800 line code reads clamp to `[1, 150]`; >800 line code or >400 line docs are denied. Minified files (>40KB, avg line >4KB) are blocked. Dependency/artifact paths are exempt. |
+| **Batch File Mutex Lock** | `PreToolUse` (`write_file`, `edit_file`, `apply_patch`) | Atomically checks and claims normalized targets in the parent's `batchFileClaims`. Same child may retry; cross-child conflicts are denied. New batches or audit IDs release claims. |
+| **Anti-Recursion & Anti-Polling** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | Blocks nested subagent spawning and `manage_subagents(Action="list")` polling (`Action="kill"` allowed); enforces evidence-based child identity. |
+| **Contract Injection** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | Appends `[FLASH-WORKER]` and `[PRO-CONTRACT]` requiring a 4-column table and local test output (`research` returns structured summaries without writes). |
+| **Command Guard & Thrashing Breaker** | `PreToolUse` (`run_command`) | Unwraps nested shells and pipelines; blocks unbounded `git log` and >400KB `cat`/`Get-Content` dumps (allows redirections and PowerShell `select` slicing); trips circuit breaker after `PRO_THRASH_LIMIT` (default 3) identical subagent commands. |
+| **Turn Wakeup & Drift Alert** | `PreInvocation` | Injects a transient 1-line wakeup in long sessions (`globalStep >= 8`) and alerts on deduplicated read/write drift (suppressed for Flash main and native Orchestrator). |
+| **Context Savings Telemetry** | `report.mjs` | `node scripts/report.mjs [--days 7]` summarizes startup strategies and estimates tokens saved (4 bytes/token) from denied reads and clamped slices (excluding `shadow` and test entries). |
+
+### Operational Modes & Environment Variables
+
+Set mode in `.state/mode.json` (`{ "mode": "enforce" | "shadow" | "off" }`, protected from agent edits) or via environment variables:
+
+- `PRO_MODE`: `enforce` (default), `shadow` (log only), `off` (bypass).
+- `PRO_NO_UPDATE_CHECK=1`: Disable background GitHub Release update checks.
+- `PRO_THRASH_LIMIT=3`: Consecutive identical subagent commands before circuit breaker trips (min `2`).
+- `PRO_NATIVE_ORCHESTRATOR=1`: Force `Lite Guard Mode`.
+- `PRO_STATE_DIR` / `PRO_LOG_PASS=1`: Override state directory or log passing hook decisions.
+
+---
+
+## Multi-Platform Support & Acceptance Status
+
+| Platform | Status | Notes |
+| :--- | :--- | :--- |
+| **Google Antigravity** | **Primary (Full Support)** | Production-verified lifecycle hooks, AGY `v1.5.11+` tier routing, Audit slice budget, and Git-free `update.mjs`. |
+| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.1.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
+| **Claude Code** | **Template Only** | Hook template provided in `hooks/claude-settings-hooks.json`; not live-validated. |
+
+### Codex Standalone Setup
+
+Extract `pro-flash-orchestrator-codex-v0.7.1.zip`, enter its marketplace root, and run:
 
 ```bash
 node install.mjs
 node doctor.mjs
 ```
 
-The installer uses the official `codex plugin marketplace add` and `codex plugin add` commands; it does not modify plugin caches. Codex CLI `0.167.0-alpha.3.2` did not load bundled plugin hooks in the acceptance environment, so the installer also connects six user-native events through `CODEX_HOME/hooks.json`. It preserves and backs up unrelated hooks. The generated commands include a runtime hash, so changed code requires review again.
-
-Review all six Pro-Flash entries in desktop **Settings > Hooks** or CLI `/hooks`, mark them trusted yourself, and start a new session. Then edit `CODEX_HOME/plugin-data/pro-flash-orchestrator/config.json` and verify the exact worker/provider selection:
+Review and trust the six Pro-Flash entries in desktop **Settings > Hooks** or CLI `/hooks`, configure the worker/provider in `CODEX_HOME/plugin-data/pro-flash-orchestrator/config.json`, then verify:
 
 ```bash
 node doctor.mjs --verify-worker
 node doctor.mjs
 ```
 
-The v0.7.0 distributed candidate is `gpt-5-mini` with low reasoning effort, but it must pass a real request before dispatch is enabled. Select a worker from the native tool model catalog as well as the provider catalog: this host currently exposes `gpt-6.1-sol` and `gpt-6-astra`, and its local worker is configured as `gpt-6.1-sol`/low. Historical provider probes are recorded in the acceptance document; a minimal CLI probe cannot establish native worker availability. A failed or stale proof blocks dispatch without falling back to the main model.
+To unregister: `node install.mjs --uninstall` (preserves `CODEX_HOME/plugin-data/pro-flash-orchestrator`).
 
-Unregister the standalone integration with:
+---
+
+## Diagnostics & Tests
+
+### Health Check & Telemetry
 
 ```bash
-node install.mjs --uninstall
+node scripts/doctor.mjs          # Host capability snapshot (strategy, hasHydrogen, source), mutex & report checks
+node scripts/report.mjs          # Production decision telemetry & context savings ROI (last 7 days)
 ```
 
-Uninstall removes only the generated Pro-Flash user-hook entries and official registrations; it preserves the extracted source and `CODEX_HOME/plugin-data/pro-flash-orchestrator` controls.
+### Offline Test Suites (No Provider API Calls)
 
-Six user-native hooks have been user-reviewed as trusted and a real desktop `PreToolUse` event was observed. Full native guard coverage and an end-to-end native worker-dispatch acceptance run remain pending, so v0.7.0 is not claimed as fully live-usable on Codex. Account sign-in and Claude Code are also not live-validated. See the [Codex adapter acceptance evidence](docs/codex-acceptance-v0.5.2.md).
-
-### Maintenance tests and release archives
-
-Public/offline maintenance gates make no provider API requests:
-
-```powershell
-git pull
-node scripts/doctor.mjs
-node scripts/test-concurrency.mjs
-node scripts/test-regressions.mjs
-node scripts/test-v060.mjs
-node scripts/test-capabilities.mjs
-node scripts/test-install.mjs
-node scripts/test-codex.mjs
-node scripts/test-update.mjs
-node scripts/install.mjs
+```bash
+node scripts/test-concurrency.mjs   # Multi-process atomic lock & guard integration stress test
+node scripts/test-regressions.mjs   # Identity isolation, patch targets, quotas, command guards & routing
+node scripts/test-v060.mjs          # v0.6.x policy, Audit slice budget & Lite Guard Mode tests
+node scripts/test-capabilities.mjs  # AGY capability probe & v1.5.11+ tier mapping tests
+node scripts/test-install.mjs       # Runtime allowlist boundary & .state/ preservation tests
+node scripts/test-codex.mjs         # Offline Codex protocol & package allowlist tests
+node scripts/test-update.mjs        # Background update checker & in-place updater tests
 ```
 
-Build the two runtime-only packages independently:
+### Packaging Runtime Archives
 
-```powershell
+```bash
 node scripts/package.mjs --runtime --platform antigravity --worktree
 node scripts/package.mjs --runtime --platform codex --worktree
 ```
-
-`runtime-files.json` and the Codex marketplace builder define separate exact allowlists. Use `--source --worktree` for a complete source archive. Relocate any complete Git checkout from an existing install directory before deploying runtime files.
-
-v0.7.0 combines these guard updates with the independently packaged platform adapters; native acceptance status remains tracked in the linked evidence.
-
----
-
-## Standard Workflow (/flash-dev)
-
-The plugin bundles the `/flash-dev` skill to structure collaboration between the architect and worker models:
-
-```text
-/flash-dev Build a microservice for user authentication and payments. Design the schema, DDD layers, and the core benchmark service; dispatch Flash in the same turn to write the rest of CRUD, DTO validation, and integration tests.
-```
-
-### Execution Steps
-
-1. Architectural Benchmark: The Pro architect drafts the schema, core API definitions, algorithms, or design tokens.
-2. Same-Turn Dispatch: The architect writes the benchmark and dispatches `invoke_subagent` in the same turn; Flash workers expand the peripheral logic and unit tests.
-3. Slice Verification: Upon receiving the 4-column completion report, the architect checks `git status --porcelain` and reads targeted 20–60 line slices to confirm correctness.
-
----
-
-## Operational Modes
-
-| Mode | Behavior | Recommended Use |
-| :--- | :--- | :--- |
-| `enforce` (Default) | All physical guards active; rewrites and blocks violations. | Standard production development. |
-| `shadow` | Logs decisions to `.state/decisions.jsonl` without modifying behavior. | Policy observation and threshold tuning. |
-| `off` | Completely bypassed; hooks return immediately. | Emergency troubleshooting. |
-
-### Configuration
-
-1. Configuration File (Immediate effect):
-   Set in `.state/mode.json`:
-   ```json
-   { "mode": "shadow" }
-   ```
-   > **Security Notice (S1)**: `.state/mode.json` is a user security configuration that can only be manually edited by the user. It is strictly protected by physical guards against agent modification or overwriting.
-   Read-only queries such as `Get-Content` and `cat` are allowed. Multi-file patches check every affected path, including rename destinations, before applying write quotas.
-2. Environment Variables (Require restarting Antigravity / shell):
-   - Operational mode:
-     - Windows PowerShell: `$env:PRO_MODE="shadow"`
-     - macOS / Linux: `export PRO_MODE=shadow`
-   - Background update checks:
-     - Set `PRO_NO_UPDATE_CHECK=1` to completely disable background GitHub release update checks and session startup notice cards.
-   - Subagent Thrashing Circuit Breaker:
-     - Set `PRO_THRASH_LIMIT=3` (default 3, minimum 2) to configure the maximum consecutive identical commands a subagent can execute before triggering a physical deny and escalating to the Pro lead architect.
-
----
-
-## Diagnostics and Telemetry
-
-### 1. Automated Test & Concurrency Stress Suite
-Run the doctor suite, including report statistics and concurrent file ownership checks. Its final line shows the current host's `strategy`, `hasHydrogen`, and `source`:
-```bash
-node scripts/doctor.mjs
-```
-
-Run the multi-process concurrency stress & guard integration test suite:
-```bash
-node scripts/test-concurrency.mjs
-```
-
-Run the audit regression suite (identity isolation, all patch targets, lock contention, turn quotas, command guards and platform routing):
-```bash
-node scripts/test-regressions.mjs
-```
-
-Run the offline Codex protocol and exact-package-allowlist suite (no provider/API calls):
-```bash
-node scripts/test-codex.mjs
-```
-
-Lock contention rejects the current quota update; retry the tool after the lock is released. The five-spawn quota resets on a new user turn, never on reads, writes or elapsed time. Turn IDs and `UserPromptSubmit` events distinguish identical prompts; hosts without these signals use changed user input or an invocation counter reset.
-
-### 2. Decision Review
-Inspect production decisions from the last 7 days (test-generated entries are automatically excluded):
-```bash
-node scripts/report.mjs
-```
-
-Inspect over a custom window:
-```bash
-node scripts/report.mjs --days 30
-```
-
-The report shares `STATE_DIR` and `LOG_FILE` with the hooks, honoring `PRO_STATE_DIR`, `PLUGIN_DATA`, and the Codex state directory. Its ROI panel counts startup strategies and estimates saved context from actual denied reads and requested/retained slice spans, using four bytes per token. Shadow decisions do not count as actual savings. The standalone Codex package provides `node report.mjs` for the Codex data directory.
 
 ---
 
 ## Known Limitations
 
-- **Pipeline & Redirection Bypass (S5)**: Shell pipelines and stream-processing commands executed directly via `run_command` (such as `head`, `grep`, `sed`, or file redirections `>`) are monitored by the command dump guard for flood prevention, but do not increment `read_file` multi-read or `write_file` benchmark tracking quotas or claim batch file ownership.
-- **Codex acceptance is incomplete**: Hosted tools, hook errors/timeouts, and later input to an already-approved interactive shell may be outside native-hook coverage. Full guard and native worker-dispatch acceptance remain pending; account sign-in and Claude Code are not live-validated.
+- **Pipeline & Redirection Bypass (S5)**: Stream commands via `run_command` (`head`, `grep`, `sed`, `>`) are checked by the dump guard but do not increment `read_file`/`write_file` quotas or claim `batchFileClaims`.
+- **Codex & Claude Code**: Codex hosted tools, hook timeouts, and already-approved interactive shells may fall outside native hook coverage; Claude Code and account sign-in are not live-validated.
 
 ---
-
-Root `SKILL.md` and `AGENTS.md` mirror `skills/flash-dev/SKILL.md` and `rules/AGENTS.md`; release tests verify their contents remain synchronized.
 
 ## Directory Structure
 
 ```text
 pro-flash-orchestrator/
-├── adapters/codex/             # Standalone Codex marketplace entry points, hooks and skills
-├── .github/
-│   └── workflows/
-│       └── release.yml         # GitHub Actions CI & release pipeline
-├── runtime-files.json          # Runtime distribution manifest
-├── docs/INSTALL.md             # Installed README template
-├── plugin.json                 # Antigravity plugin manifest
-├── hooks.json                  # Lifecycle hook routing definitions
-├── hooks/
-│   ├── claude-settings-hooks.json # Claude Code hooks configuration
-│   └── codex-hooks.json        # OpenAI Codex CLI hooks configuration
-├── .gitattributes              # Enforces LF line endings for shell scripts
-├── LICENSE                     # MIT License
-├── README.md                   # English technical documentation
-├── README.zh-CN.md             # Chinese technical documentation
-├── rules/
-│   └── AGENTS.md               # Persistent roles and boundaries
-├── skills/
-│   └── flash-dev/
-│       └── SKILL.md            # /flash-dev prompt templates and procedures
-├── scripts/
-│   ├── lib.mjs                 # Shared utility library (subagent detection, spawn window, logging)
-│   ├── session-start.mjs       # Startup role injection, capabilities and update check trigger
-│   ├── check-update-worker.mjs # Non-blocking background GitHub release update checker
-│   ├── update.mjs              # In-place runtime updater preserving .state/
-│   ├── pre-invocation.mjs      # Turn-boundary wakeup & deduplicated drift detector
-│   ├── guard-subagent.mjs      # Sub-agent guard (recursion, polling, downgrade, contract)
-│   ├── guard-read-file.mjs     # Read guard (slicing, dependency exemptions, multi-read deny)
-│   ├── guard-write-file.mjs    # Write guard (benchmark limits and batch file ownership)
-│   ├── guard-command.mjs       # Command guard (unwrapping, redirection, thrashing circuit breaker)
-│   ├── doctor.mjs              # Doctor suite, live capability snapshot and Codex diagnostics
-│   ├── test-concurrency.mjs    # Concurrency stress & guard integration test suite
-│   ├── test-regressions.mjs    # Reproductions of audited defects and boundary cases
-│   ├── test-update.mjs         # Background update checker and in-place updater test suite
-│   ├── install.mjs             # Antigravity deployment and Codex marketplace setup
-│   ├── codex-*.mjs             # Native Codex hook, runtime, setup and maintenance bridge
-│   ├── runtime-files.mjs       # Shared runtime allowlist loader
-│   ├── test-install.mjs        # Runtime boundary and state preservation tests
-│   ├── test-codex.mjs          # Offline Codex protocol and package allowlist tests
-│   ├── package.mjs             # Multi-platform distribution packager
-│   └── report.mjs              # Production decision telemetry reviewer
-└── assets/
-    └── logo.svg                # Plugin icon
+├── adapters/codex/                # Standalone Codex marketplace entry points, hooks & skills
+├── assets/logo.svg                # Plugin icon
+├── docs/                          # INSTALL template, audits & Codex acceptance evidence
+├── hooks/                         # Claude Code & Codex CLI hook configurations
+├── hooks.json                     # Antigravity lifecycle hook routing
+├── plugin.json                    # Antigravity plugin manifest (v0.7.1)
+├── rules/AGENTS.md                # Persistent architect & worker rules (mirrored at root AGENTS.md)
+├── runtime-files.json             # Runtime distribution allowlist
+├── skills/flash-dev/SKILL.md      # /flash-dev workflow skill (mirrored at root SKILL.md)
+└── scripts/
+    ├── lib.mjs                    # Shared utilities, state locks, capability & mode resolution
+    ├── session-start.mjs          # Startup role injection, UI card & update check trigger
+    ├── pre-invocation.mjs         # Turn-boundary wakeup & deduplicated drift detector
+    ├── guard-subagent.mjs         # Recursion, polling, tier routing & contract injection
+    ├── guard-read-file.mjs        # Smart slicing, Audit slice budget & multi-read guard
+    ├── guard-write-file.mjs       # Benchmark write limits & batchFileClaims mutex
+    ├── guard-command.mjs          # Shell unwrapping, dump guard & thrashing circuit breaker
+    ├── check-update-worker.mjs    # Non-blocking background GitHub Release checker
+    ├── update.mjs                 # Git-free in-place updater preserving .state/
+    ├── install.mjs                # Antigravity & Codex installer
+    ├── package.mjs                # Multi-platform release packager
+    ├── doctor.mjs                 # Diagnostics & live capability snapshot
+    ├── report.mjs                 # Decision telemetry & context savings estimator
+    ├── codex-*.mjs                # Native Codex hook, runtime, setup & maintenance bridge
+    └── test-*.mjs                 # Offline verification & regression suites
 ```
-
----
 
 ## License
 
-This project is licensed under the [MIT License](LICENSE).
+[MIT License](LICENSE)

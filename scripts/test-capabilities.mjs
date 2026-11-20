@@ -143,6 +143,36 @@ await test('parseAvailableModels parses real agy models output with tabs and hea
   assert(result.availableModels.includes('gemini-pro-orchestrator-g1-pro'));
   assert(result.availableModels.includes('gemini-3.8-flash-high'));
 });
+await test('parseAvailableModels and CLI probe parse Gemini 4 Neon tiers and set hasNeon',()=>{
+  const neonOutput = 'Fetching available models...\n' +
+    'gemini-4-neon-low\tGemini 4 Neon (Low)\n' +
+    'gemini-4-neon-medium\tGemini 4 Neon (Medium)\n' +
+    'gemini-4-neon-high\tGemini 4 Neon (High)\n' +
+    'gemini-4-neon-xhigh\tGemini 4 Neon (XHigh)\n' +
+    'gemini-4-hydrogen-medium\tGemini 4 Hydrogen (Medium)';
+  probe = () => neonOutput;
+  const result = lib.detectModelCapabilities(base('neon-agy-models'), true);
+  assert.equal(result.hasNeon, true);
+  assert.equal(result.hasHydrogen, true);
+  for (const id of ['gemini-4-neon-low', 'gemini-4-neon-medium', 'gemini-4-neon-high', 'gemini-4-neon-xhigh']) {
+    assert(result.availableModels.includes(id), id);
+  }
+});
+await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-worker and flash target',()=>{
+  for (const modelFields of [{modelName:'Gemini 4 Neon (High)'}, {modelName:'', model:'Gemini 4 Neon (High)'}]) {
+    const payload = base('neon-main', modelFields);
+    const caps = lib.readCapabilities(payload);
+    assert.equal(caps.source, 'payload');
+    assert.equal(caps.hasNeon, true);
+    assert.equal(caps.hasHydrogen, true);
+    assert.equal(caps.strategy, 'hydrogen-worker');
+    assert.notEqual(caps.strategy, 'flash-main-relaxed');
+    assert.notEqual(caps.strategy, 'hydrogen-main');
+    assert.equal(lib.targetWorkerModel('antigravity', 'self', payload), 'flash');
+    assert.equal(lib.targetWorkerModel('antigravity', 'research', payload), 'flash');
+  }
+  assert.equal(calls.length, 0);
+});
 await test('Hydrogen ACL uses legal flash by default and enforces INVOCABLE_SUBAGENT_MODELS enum protection',()=>{
   cache();
   assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');

@@ -102,7 +102,7 @@ await test('report discards malformed JSON values and rejects invalid day window
   }
 });
 await test('release metadata, root prompt mirrors and legacy matcher sets stay synchronized',()=>{
-  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.0');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.1');
   for(const [mirror,canonical] of [['SKILL.md','skills/flash-dev/SKILL.md'],['AGENTS.md','rules/AGENTS.md']]) {
     assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),
       fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n'));
@@ -115,6 +115,8 @@ await test('release metadata, root prompt mirrors and legacy matcher sets stay s
 });
 await test('native detection checks both model fields and the explicit environment flag',()=>{
   assert(lib.isNativeOrchestrator({modelName:'Orchestrator (Argon)'}));
+  assert(lib.isNativeOrchestrator({modelName:'Orchestrator (Neon)'}));
+  assert(lib.isNativeOrchestrator({model:'Orchestrator (Neon)'}));
   assert(lib.isNativeOrchestrator({model:'ORCHESTRATOR',modelName:'Pro'}));
   assert(!lib.isNativeOrchestrator({model:'argon'}));
   assert(!lib.isNativeOrchestrator(null));
@@ -214,6 +216,17 @@ await test('Lite mode bypasses read and write counts via model name or environme
       assert.equal(decision(hook('guard-write-file.mjs',base('lite-write-'+byEnv,{...extra,toolCall:{name:'write_file',args:{Path:files[i]}}}),env)),'allow');
     }
   }
+});
+await test('Orchestrator (Neon) enables Lite Guard Mode and exempts read and write counts',()=>{
+  const extra={modelName:'Orchestrator (Neon)'};
+  assert(lib.isNativeOrchestrator(extra));
+  for(let i=0;i<5;i++) {
+    assert.equal(decision(hook('guard-read-file.mjs',read('neon-lite-read',files[i],{StartLine:1,EndLine:80},extra))),'allow');
+    assert.equal(decision(hook('guard-write-file.mjs',base('neon-lite-write',{...extra,toolCall:{name:'write_file',args:{Path:files[i]}}}))),'allow');
+  }
+  const card=hook('session-start.mjs',base('neon-lite-card',extra));
+  assert(card.injectSteps[0].systemMessage.renderInfo.markdown.includes('Lite Guard Mode'));
+  assert(card.injectSteps[0].systemMessage.renderInfo.markdown.includes('豁免文件数量拦截'));
 });
 await test('Lite preserves huge full-read denial, soft slicing and protected writes',()=>{
   const extra={modelName:'Orchestrator (Argon)'};

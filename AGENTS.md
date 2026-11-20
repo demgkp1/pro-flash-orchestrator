@@ -1,4 +1,4 @@
-# Pro 主控 + Flash 助手 (v0.7.0 全场景通用)
+# Pro 主控 + Flash 助手 (v0.7.1 全场景通用)
 
 ## 0. 角色定位
 - 含 `[FLASH-WORKER]` / `[PRO-CONTRACT]` → **执行子代理**：禁再派单，只改指定文件，按契约回报。
@@ -6,9 +6,9 @@
 
 ## 1. 核心红线（Hook 物理拦截）
 - **AGY 动态模型路由**：仅主会话启动执行 `agy models`，缓存至 `STATE_DIR/capabilities.json`；同一父进程 <12 小时、跨终端 <1 小时复用。后续 Hook 只读缓存。有 Hydrogen 权限用 `hydrogen-worker`，明确无权限用 `flash-fallback`；CLI 不可用时可从 Gemini 4 主模型推断。`PRO_HYDROGEN_ID` 自定义宿主 Worker ID；`PRO_RESEARCH_MODEL` / `PRO_SELF_MODEL` 优先于 `PRO_WORKER_MODEL`。
-- **AGY 代号**：Argon / Carbon 为 Gemini 4 主模型，Hydrogen 为轻量 Worker，Orchestrator (Argon) 为原生编排入口；Gemini 3.8 Flash / Flash 为轻量主模型或回退 Worker。
+- **AGY 代号**：`Gemini 4 Neon`（`gemini-4-neon-low/medium/high/xhigh`）为 Pro/Ultra/Enterprise 默认主力主模型，Argon / Carbon 为 Gemini 4 主模型，Hydrogen 为轻量 Worker，`Orchestrator (Neon)` / `Orchestrator (Argon)` 为原生编排入口（自动启用 Lite Guard Mode）；Gemini 3.8 Flash / Flash 为轻量主模型或回退 Worker。
 - **Flash 主模型例外**：AGY 非子代理 Flash 主会话使用 `flash-main-relaxed`，可读最多 6 个文件、直改最多 4 个源码文件。以下 2/3 文件严格规则适用于重型主模型；大文件、Audit 和 Lite 规则保持有效。
-- **派单参数**：以下示例使用合法枚举 `Model="inherit"`；Hydrogen 主会话保留 inherit，其他主会话由 Hook 路由为 flash，以 SessionStart 卡片实际参数为准。仅显式配置 PRO_HYDROGEN_ID 且有能力时才使用自定义宿主 ID。
+- **派单参数**：以下示例使用合法枚举 `Model="inherit"`；按 AGY `v1.5.11+` 官方档位映射规范，`invoke_subagent` 统一使用档位别名：`flash` → `Gemini 4 Hydrogen High`，`[FORCE-PRO]` 下的 `pro` → `Gemini 4 Hydrogen XHigh`，Hydrogen 主会话 `inherit` → 继承 Hydrogen（其他主会话由 Hook 路由为 `flash`，以 SessionStart 卡片实际参数为准）。仅显式配置 PRO_HYDROGEN_ID 且有能力时才使用自定义宿主 ID。
 - **原生 Orchestrator 兼容**：`modelName` / `model` 匹配 `/orchestrator/i`，或 `PRO_NATIVE_ORCHESTRATOR=1` 时启用 **Lite Guard Mode**。豁免主控读写文件数量拦截与数量漂移催派；超大文件切片、防嵌套、禁轮询、派单契约、命令守门和子代理文件互斥锁保留。
 - **Audit 动态抽检**：每次放行 `self` 派单进入 `audit`，增加 2 次切片额度，上限 10。明确起止行号且 ≤80 行时优先消耗额度，可连续抽检多个文件；新用户轮次清零，额度耗尽后恢复普通读取配额。
 - **自检证据与死循环熔断**：子代理与父会话各保留最近 10 条脱敏命令放行记录。本批无记录时轻量提醒核实自检。`PreToolUse` 放行不能证明进程执行成功，测试结果仍须核对实际输出和退出状态。子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。后台零阻塞版本检测与 `scripts/update.mjs` 免 Git 升级。
