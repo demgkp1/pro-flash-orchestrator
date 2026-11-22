@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
   "displayName": "pro-flash-orchestrator",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "license": "MIT",
-  "description": "v0.7.1 Pro 主控与轻量助手分流：完整支持 Gemini 4 Neon 与 Orchestrator (Neon)、AGY v1.5.11+ 官方档位映射、零阻塞后台更新检测与免 Git 一键升级（update.mjs）、子代理死循环熔断器（Thrashing Circuit Breaker）、动态 Audit 切片配额、同批源码互斥锁与上下文省流估算。",
+  "description": "v0.7.2 Pro 主控与轻量助手分流：新增双轨验收契约架构（工程实现四列表格 + 智力研报典范长文），支持并发扇出调研动静分离与报告落盘；完整支持 Gemini 4 Neon 与 Orchestrator (Neon)、AGY v1.5.11+ 官方档位映射、零阻塞后台更新检测与免 Git 一键升级（update.mjs）、子代理死循环熔断器、动态 Audit 切片配额与同批源码互斥锁。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",

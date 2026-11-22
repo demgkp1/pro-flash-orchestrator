@@ -70,16 +70,15 @@ function artifactDir(payload) {
   return path.join(os.homedir(), '.gemini', 'antigravity', 'brain', 'default');
 }
 
-function contractFor(typeName, payload) {
+function contractFor(typeName, payload, isMulti = false) {
   const dir = artifactDir(payload).replace(/[\\/]+$/, '');
   const parent = String(payload?.conversationId || '');
   const link = /^[a-zA-Z0-9._:-]+$/.test(parent) && parent !== 'unknown' ? ` [PRO-PARENT:${parent}]` : '';
   if (typeName === 'research') {
-    return (
-      `${CONTRACT_MARKER} 汇报仅限结构化摘要（≤30 行）：核心结论 / 架构与模块清单 / 约束与隐患 / 关键文件与行号。` +
-      `每项结论必须附带具体文件:行号（file:line）及 1-2 行代码证据；凡包含统计结论的，必须附带生成该统计的执行命令。` +
-      `严禁粘贴大段源码原文（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。${link}`
-    );
+    if (isMulti) {
+      return `${CONTRACT_MARKER} 【并发调研契约】完整调研报告请写入 \`${dir}/reports/<task>.md\`；消息中请直接结构化摘要输出：核心结论速查、关键文件与行号证据、风险隐患与 Top 优化建议。严禁回贴大段无关源码（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。${link}`;
+    }
+    return `${CONTRACT_MARKER} 【深度研报契约】请按典范报告格式直接结构化摘要输出：1. 关键模块/任务深度剖析；2. 具体文件、行号与事实证据；3. 核心薄弱环节与风险诊断；4. 最有价值的 Top 优化建议。严禁粘贴大段无关源码原文（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。${link}`;
   }
   return (
     `${CONTRACT_MARKER} 完成后仅回复四列表格，禁止粘贴源码（单段代码 ≤10 行）；完整报告写入 \`${dir}/<task>.report.md\`：\n` +
@@ -249,7 +248,10 @@ function decide() {
       }
     }
 
-    const nextPrompt = promptKey ? appendContract(prompt, contractFor(typeName, payload)) : null;
+    const convId = String((payload && payload.conversationId) || '');
+    const session = convId ? readSession(convId) : null;
+    const isMulti = Boolean(session && Number(session.currentBatchSpawns || 0) > 1);
+    const nextPrompt = promptKey ? appendContract(prompt, contractFor(typeName, payload, isMulti)) : null;
     if (nextPrompt) overwrite[promptKey] = nextPrompt;
 
     if (Object.keys(overwrite).length > 0) {

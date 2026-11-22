@@ -1,4 +1,4 @@
-# Pro 主控 + Flash 助手 (v0.7.1 全场景通用)
+# Pro 主控 + Flash 助手 (v0.7.2 全场景通用)
 
 ## 0. 角色定位
 - 含 `[FLASH-WORKER]` / `[PRO-CONTRACT]` → **执行子代理**：禁再派单，只改指定文件，按契约回报。
@@ -37,4 +37,6 @@
 - 查跑：`grep_search`/`find_by_name`/`list_dir`、`run_command`
 - 派续：`invoke_subagent(TypeName="self"|"research", Model="inherit", Prompt=...)`、`send_message`
   - 跨平台等价调用：Antigravity: `invoke_subagent(Model="inherit")` / Claude Code: `Agent` 或 `Task(model="haiku")` / Codex CLI: `spawn_agent(model="gpt-5-mini")`
-- 汇报：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败或触发死循环熔断强制交由 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。
+- 验收契约（双轨制）：
+  - **工程实现（self）**：四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）。缺自检仅要结果行；连续 2 次失败或触发死循环熔断强制交由 Pro 接管；严禁回贴 >10 行源码（写 artifact，聊天仅回表格）。
+  - **深度研报（research / 典范模式）**：废除 30 行限制，按结构化深度研报交付（关键模块剖析 + 事实与代码行号实证 + 核心风险瓶颈 + Top 优化建议）；单代理调研直接在消息中完整结构化输出，多并发扇出调研完整内容写入 reports 并在消息中提供精要矩阵与建议。严禁回贴无关大段源码（单段 ≤10 行）。

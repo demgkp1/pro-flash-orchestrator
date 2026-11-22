@@ -1,12 +1,12 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.7.1「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.7.2「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.7.1)：主控标杆 + Flash 执行工作流
+# `/flash-dev` (v0.7.2)：主控标杆 + Flash 执行工作流
 
-> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.1 支持免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测）与子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
+> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.2 支持免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测）与子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
 
 ## 1. 三明治协同四步法
 
@@ -66,8 +66,23 @@ AGY 非子代理主模型为 Flash 时启用 `flash-main-relaxed`：普通读取
 
 ## 4. 汇报契约（Hook 自动追加）
 
+### A. 工程实现契约（`self` / `[FLASH-WORKER]`）
+
 | 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |
 | :--- | :--- | :--- | :--- |
 
 - 完整分析写入 artifact 目录，聊天仅回四列表格。
 - 严禁粘贴 >10 行源码；自检命令必须真实执行并提供明确结果。
+
+### B. 深度研报契约（`research` / 典范模式）
+
+- **废除字数限制**：彻底废除旧版 ≤30 行限制，直接交付高信息密度结构化研报。
+- **四大核心要素**：
+  1. **关键模块/任务深度剖析**：系统架构梳理、核心数据流与关键业务逻辑剖析。
+  2. **事实与代码行号实证**：每项结论必须附带具体文件路径、精确行号（`file:line`）及代码证据。
+  3. **核心薄弱环节与风险瓶颈**：诊断潜在边界缺陷、性能瓶颈、死锁或并发隐患。
+  4. **Top 优化建议**：提供最有落地价值的高优先级改进与重构建议。
+- **动静分离交付**：
+  - 单代理探路调研：调研结果直接在消息中完整结构化输出。
+  - 多并发扇出调研：完整长篇研报写入 `reports/<task>.md`，消息中仅回核心结论速查、证据矩阵与 Top 建议。
+- **源码回贴红线**：严禁回贴无关大段源码（单段 ≤10 行）。
