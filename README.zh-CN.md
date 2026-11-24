@@ -5,9 +5,9 @@
 面向通用软件工程、代码审查、Bug 排查、重构与文档研读。通过确定性的物理 Hook 守门，让旗舰主模型（Pro）聚焦核心架构决策与标杆实现，并将多文件探路、外围扩写与单元测试分流给轻量助手（Flash / Hydrogen）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.2-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.3-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#多平台支持与验收状态)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-7%20Passed-green.svg)](#诊断与测试)
+[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#诊断与测试)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -37,7 +37,7 @@
 ┌────────────────────────────────────────┐
 │       物理生命周期 Hook 守门体系        │
 │  - AGY v1.5.11+ 官方档位别名路由        │
-│  - 注入 [FLASH-WORKER] 与四列表格契约   │
+│  - 注入 [FLASH-WORKER] 与双轨验收契约   │
 │  - 读写配额限制与同批文件互斥锁         │
 │  - 防递归、禁轮询与死循环熔断器         │
 └───────────────────┬────────────────────┘
@@ -47,7 +47,7 @@
 │        Worker 助手 (Hydrogen / Flash)  │
 │  - 探路或修改严格互斥的指定文件         │
 │  - 执行局部单测自检                     │
-│  - 仅按四列表格格式回报结果             │
+│  - 按双轨契约回报：四列表格 / 调研报告  │
 └───────────────────┬────────────────────┘
                     │ 消息回报
                     ▼
@@ -59,13 +59,23 @@
 
 ---
 
+## v0.7.3 最新特性
+
+- **方案 A 纯只读双轨契约**：进一步固化 `research` 并发调研的纯只读约束（禁止写文件），同轮并发仅输出高密度精要矩阵，完整归档统一交由主控或具备写权限的代理完成。
+- **独立 `currentBatchResearchSpawns` 与 `[MULTI-RESEARCH]` 追踪**：引入独立的 `currentBatchResearchSpawns` 计数并协同 `[MULTI-RESEARCH]` 标记，精准识别同轮并发调研契约切换，避免与工程实现批次互相干扰。
+- **冷启动正则补全与动态 `PLUGIN_VERSION`**：补全冷启动阶段的正则匹配覆盖，并将 `PLUGIN_VERSION` 改为动态解析插件元数据版本，消除硬编码版本漂移。
+- **Codex 双轨契约同步与死循环熔断日志修复**：将双轨验收契约规范同步至 Codex 适配器，并修复死循环熔断器（Thrashing Circuit Breaker）触发时的日志记录问题。
+- **完整继承 v0.7.2 全部特性**：保留工程/调研双轨验收契约、Gemini 4 Neon 与原生 Orchestrator 支持、AGY v1.5.11+ 官方档位映射、免 Git 升级（`update.mjs`）、Audit 动态切片配额与同批源码互斥锁。
+
+---
+
 ## v0.7.2 最新特性
 
 - **双轨验收契约架构（Dual-Track Acceptance Contracts）**：彻底解耦工程实现与认知调研的验收规范与交付要求。
   - **工程实现轨（`self`）**：保持结构化四列表格（`| 文件绝对路径 | 起止行号 | 核心变更 | 自检命令与结果 |`）与多代理并发边界红线（专属写入互斥隔离、单文件局部测试）。严禁回贴 >10 行源码（单段 ≤10 行），完整分析写入 artifact 目录。
   - **深度研报轨（`research` / 典范模式）**：废除旧版 ≤30 行字数限制，单代理探路派单自动注入【深度研报契约】，要求按典范报告格式深度剖析关键模块、列举代码行号实证、诊断风险瓶颈与产出 Top 优化建议，直接在消息中完整结构化交付。
-- **并发扇出动静分离与报告落盘（Concurrent Fan-Out Dynamic/Static Separation）**：同轮多代理并发调研场景下，智能切换为【并发调研契约】，驱动子代理将长篇深度研报落盘至 `reports/<task>.md`，消息中仅保留核心结论速查、证据矩阵与 Top 建议索引，杜绝多代理并发汇报对主会话上下文的洪泛冲击。
-- **规范镜像同步与测试强化**：确保根目录镜像（`SKILL.md` ↔ `skills/flash-dev/SKILL.md`、`AGENTS.md` ↔ `rules/AGENTS.md`）保持严格的字节级与换行符一致；新增 `scripts/test-contract-dual-track.mjs` 测试套件，全覆盖验证双轨契约与并发报告落盘机制。
+- **并发扇出精要矩阵防洪泛（Concurrent Fan-Out Executive Matrix）**：同轮多代理并发调研（或在首单派发中显式标注 `[MULTI-RESEARCH]`）时，智能切换为【并发调研契约】；子代理保持纯只读禁止写文件，仅输出高密度精要矩阵与索引（核心结论、`file:line` 证据、风险与 Top 建议）以防止上下文洪泛，如需完整归档由主控或写权限代理汇总落盘。
+- **规范镜像同步与测试强化**：确保根目录镜像（`SKILL.md` ↔ `skills/flash-dev/SKILL.md`、`AGENTS.md` ↔ `rules/AGENTS.md`）保持严格的字节级与换行符一致；新增 `scripts/test-contract-dual-track.mjs` 测试套件，全覆盖验证双轨契约与并发精要矩阵防洪泛机制。
 - **完整继承 v0.7.1 全部特性**：Gemini 4 Neon 与 Orchestrator (Neon) 支持、AGY v1.5.11+ 官方档位映射、免 Git 一键升级（`update.mjs`）、子代理死循环熔断器、动态 Audit 切片配额与同批源码互斥锁。
 
 ---
@@ -81,10 +91,10 @@
 
 ## 快速安装与免 Git 升级
 
-v0.7.2 发布两个独立的 Release 资产包：
+v0.7.3 发布两个独立的 Release 资产包：
 
-- `pro-flash-orchestrator-antigravity-v0.7.2.zip`（根目录为 `pro-flash-orchestrator/`）
-- `pro-flash-orchestrator-codex-v0.7.2.zip`（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
+- `pro-flash-orchestrator-antigravity-v0.7.3.zip`（根目录为 `pro-flash-orchestrator/`）
+- `pro-flash-orchestrator-codex-v0.7.3.zip`（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
 
 ### 方式一：Release 用户免 Git 在线 / 离线升级
 
@@ -93,7 +103,7 @@ v0.7.2 发布两个独立的 Release 资产包：
 node "<插件安装目录>/scripts/update.mjs"
 
 # 使用本地已下载的 ZIP 包离线升级
-node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.2.zip"
+node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.3.zip"
 
 # 预览变更但不写入磁盘
 node "<插件安装目录>/scripts/update.mjs" --dry-run
@@ -132,7 +142,7 @@ node scripts/install.mjs
 | **切片防泄洪与多文件拦截** | `PreToolUse` (`read_file`, `view_file`) | 未切片的 300–800 行代码自动收窄至 `[1, 150]`；>800 行代码或 >400 行文档直接拦截。拦截 Minified 单行压缩文件（>40KB 且平均行长 >4KB）。依赖库与 Artifact 路径豁免。 |
 | **同批次文件互斥锁** | `PreToolUse`（`write_file`, `edit_file`, `apply_patch`） | 在父 Session 的 `batchFileClaims` 中原子检查并认领归一化目标路径。同一子代理可重试，跨子代理冲突直接拒绝；新批次或新 Audit ID 释放认领。 |
 | **防递归与防轮询** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | 严禁子代理嵌套派单，拦截 `manage_subagents(Action="list")` 轮询（放行 `Action="kill"`）；基于父会话元数据与转录证据识别身份。 |
-| **中立契约注入** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 自动注入 `[FLASH-WORKER]` 与 `[PRO-CONTRACT]`，要求工程子代理返回四列表格与局部自检结果（`research` 仅输出结构化摘要，禁止写文件）。 |
+| **中立契约注入** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | 自动注入 `[FLASH-WORKER]` 与 `[PRO-CONTRACT]`，要求工程子代理返回四列表格与局部自检结果（`research` 仅输出深度研报或并发精要矩阵，纯只读禁止写文件）。 |
 | **命令守门与死循环熔断** | `PreToolUse` (`run_command`) | 递归解包嵌套 Shell 与管道；拦截无界 `git log` 与 >400KB `cat`/`Get-Content` 倾倒（放行重定向与 PowerShell `select` 切片）；连续 `PRO_THRASH_LIMIT`（默认 3）次相同命令触发物理熔断。 |
 | **轮次唤醒与漂移告警** | `PreInvocation` | 长会话（`globalStep >= 8`）轮次起始注入单行瞬态唤醒，并对去重后的连续读写漂移发出单轮告警（Flash 主会话与原生 Orchestrator 自动降噪）。 |
 | **省流遥测统计** | `report.mjs` | 运行 `node scripts/report.mjs [--days 7]` 汇总启动策略，并按被拦截读取与切片收窄行距估算节省的 Token（按 4 bytes/token 换算，自动排除 `shadow` 与测试记录）。 |
@@ -154,12 +164,12 @@ node scripts/install.mjs
 | 平台 | 当前状态 | 说明 |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **主力完整支持** | 生产级生命周期 Hook 守门、AGY `v1.5.11+` 档位路由、Audit 动态切片配额与免 Git `update.mjs`。 |
-| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.2.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
+| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.3.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
 | **Claude Code** | **仅提供配置模板** | 提供 `hooks/claude-settings-hooks.json` 钩子适配模板，尚未进行实机真实验证。 |
 
 ### Codex 独立本地 Marketplace 安装
 
-解压 `pro-flash-orchestrator-codex-v0.7.2.zip` 并进入 Marketplace 根目录：
+解压 `pro-flash-orchestrator-codex-v0.7.3.zip` 并进入 Marketplace 根目录：
 
 ```bash
 node install.mjs
@@ -196,6 +206,7 @@ node scripts/test-capabilities.mjs  # AGY 能力探测与 v1.5.11+ 官方档位�
 node scripts/test-install.mjs       # 运行时白名单边界与 .state/ 保留测试
 node scripts/test-codex.mjs         # 离线 Codex 协议与精确打包白名单测试
 node scripts/test-update.mjs        # 后台版本检测与免 Git 原地升级测试
+node scripts/test-contract-dual-track.mjs  # 双轨验收契约与 [MULTI-RESEARCH] 并发精要矩阵测试
 ```
 
 ### 构建运行包
@@ -223,7 +234,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL 模板、审计记录与 Codex 验收证据
 ├── hooks/                         # Claude Code 与 Codex CLI 钩子适配配置
 ├── hooks.json                     # Antigravity 生命周期钩子路由
-├── plugin.json                    # Antigravity 插件清单 (v0.7.2)
+├── plugin.json                    # Antigravity 插件清单 (v0.7.3)
 ├── rules/AGENTS.md                # 常驻架构师与助手规范（根目录 AGENTS.md 为其镜像）
 ├── runtime-files.json             # 运行时分发白名单
 ├── skills/flash-dev/SKILL.md      # /flash-dev 工作流技能（根目录 SKILL.md 为其镜像）

@@ -2,6 +2,7 @@
 /** Read-only app-server protocol queries. Never changes hook trust. */
 import {spawn} from 'node:child_process';
 import {redact} from './codex-runtime.mjs';
+import {PLUGIN_VERSION} from './lib.mjs';
 export async function inspectNative({cwd,models=false,timeout=20000}={}) {
   return await new Promise((resolve,reject)=>{
     const child=spawn(process.env.PFO_CODEX_BIN || 'codex',['app-server','--stdio'],{cwd,windowsHide:true,stdio:['pipe','pipe','pipe']});
@@ -28,6 +29,6 @@ export async function inspectNative({cwd,models=false,timeout=20000}={}) {
         }
       }
     });
-    send({id:1,method:'initialize',params:{clientInfo:{name:'pfo_diagnostics',title:'Pro-Flash read-only diagnostics',version:'0.7.1'},capabilities:{experimentalApi:true}}});
+    send({id:1,method:'initialize',params:{clientInfo:{name:'pfo_diagnostics',title:'Pro-Flash read-only diagnostics',version:PLUGIN_VERSION},capabilities:{experimentalApi:true}}});
   });
 }

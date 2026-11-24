@@ -163,6 +163,7 @@ if (mode === 'off' || isSubAgent(payload)) {
       state.lastUserTurnId = turnId;
       state.userTurnSequence = Number(state.userTurnSequence || 0) + 1;
       state.currentBatchSpawns = 0;
+      state.currentBatchResearchSpawns = 0;
       state.auditPendingWakeup = false;
       if (!isAuditWakeup) {
         state.maxReadsAllowed = baseReads;

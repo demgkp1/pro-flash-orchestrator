@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * SessionStart hook (v0.7.1)
+ * SessionStart hook (dynamic version via PLUGIN_VERSION)
  *
  * Injects the role + red lines ONCE per conversation as a persistent
  * `systemMessage` (one copy in the trajectory, re-sent each turn), and renders a
@@ -11,14 +11,14 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { PLUGIN_DIR, currentMode, detectModelCapabilities, getHarness, isNativeOrchestrator, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, readUpdateNotice, setContext, targetWorkerModel, updateSession } from './lib.mjs';
+import { PLUGIN_DIR, PLUGIN_VERSION, currentMode, detectModelCapabilities, getHarness, isNativeOrchestrator, isSubAgent, logDecision, output, pruneStaleSessions, readPayload, readUpdateNotice, setContext, targetWorkerModel, updateSession } from './lib.mjs';
 
 const RULES = '[Pro-Flash Orchestrator Active]';
 const DOCTOR = fs.existsSync(path.join(PLUGIN_DIR, 'scripts', 'doctor.mjs'))
   ? 'node scripts/doctor.mjs' : '在维护工程运行 node scripts/doctor.mjs';
 
 const CARD = [
-  '**Pro-Flash Orchestrator v0.7.1 已接管本会话**',
+  `**Pro-Flash Orchestrator v${PLUGIN_VERSION} 已接管本会话**`,
   '',
   '| 守门 | 行为 |',
   '| --- | --- |',
@@ -93,7 +93,7 @@ if (mode === 'off') {
             // whole hook result (verified against language_server 2026-11-06).
             // renderInfo is the supported way to render a card to the user.
             renderInfo: {
-              title: 'Pro-Flash Orchestrator v0.7.1',
+              title: `Pro-Flash Orchestrator v${PLUGIN_VERSION}`,
               titlePrefix: native ? '轻量护栏' : relaxed ? '宽松策略' : '已接管',
               markdown: card,
             },

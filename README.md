@@ -5,9 +5,9 @@ A lifecycle-hook orchestration engine for Google Antigravity, with an independen
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. It keeps the flagship model (Pro) focused on architectural decisions and benchmark implementations while offloading exploration, peripheral expansion, and tests to a lightweight worker (Flash / Hydrogen) via deterministic physical hooks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.2-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.3-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#multi-platform-support--acceptance-status)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-7%20Passed-green.svg)](#diagnostics--tests)
+[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#diagnostics--tests)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -47,7 +47,7 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 │        Worker (Hydrogen / Flash)       │
 │  - Explores or expands disjoint files  │
 │  - Runs targeted local verification    │
-│  - Replies with 4-column table only    │
+│  - Dual-track: 4-col table or report   │
 └───────────────────┬────────────────────┘
                     │ Response
                     ▼
@@ -59,12 +59,22 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ---
 
+## What's New in v0.7.3
+
+- **Option A Pure Read-Only Dual-Track Contract**: Enforces strict read-only execution without file writes for concurrent `research` dispatches, returning high-density executive matrices while delegating full archival to Pro or write-capable agents.
+- **Dedicated `currentBatchResearchSpawns` & `[MULTI-RESEARCH]` Tracking**: Isolates concurrent research spawn counting via `currentBatchResearchSpawns` alongside explicit `[MULTI-RESEARCH]` tagging so multi-research contract switching never collides with engineering batches.
+- **Cold-Start Regex Completion & Dynamic `PLUGIN_VERSION`**: Completes cold-start pattern matching coverage and resolves `PLUGIN_VERSION` dynamically from plugin metadata instead of hardcoded strings.
+- **Codex Dual-Track Sync & Thrashing Breaker Logging Fix**: Synchronizes the dual-track acceptance contract rules to the Codex adapter and fixes thrashing circuit breaker diagnostic logging.
+- **Preserves All v0.7.2 Capabilities**: Retains the `self`/`research` dual-track contracts, Gemini 4 Neon and native Orchestrator support, AGY v1.5.11+ tier mapping, git-free upgrades (`update.mjs`), Audit slice quota, and batch file mutex.
+
+---
+
 ## What's New in v0.7.2
 
 - **Dual-Track Acceptance Contracts Architecture**: Cleanly decouples engineering code implementation from cognitive research explorations.
   - **Engineering Implementation Track (`self`)**: Enforces the 4-column completion table (`| File Absolute Path | Line Range | Core Changes | Self-Test Command & Result |`) and concurrency safety boundaries (file mutex isolation, local unit testing). Inline source code dumps are strictly prohibited (single snippets ≤10 lines); full reports land in the artifacts directory.
   - **Deep Research Paradigm Track (`research`)**: Formally abolishes the legacy 30-line truncation limit, delivering full structured paradigm reports directly in the message covering key module analysis, line-number factual evidence, risk diagnosis, and top actionable recommendations.
-- **Concurrent Fan-Out Dynamic/Static Separation**: In multi-agent concurrent research batches within the same turn, dispatches dynamically switch to the Concurrent Research Contract (`【并发调研契约】`), directing subagents to persist full research reports to `reports/<task>.md` while keeping the chat response focused on an executive summary matrix and recommendation index to prevent conversation context saturation.
+- **Concurrent Fan-Out Executive Matrix (Context Flood Prevention)**: In multi-agent concurrent research batches within the same turn (or when `[MULTI-RESEARCH]` is explicitly tagged on the first dispatch), dispatches dynamically switch to the Concurrent Research Contract (`【并发调研契约】`). Subagents remain strictly read-only without file writes, returning only a high-density executive summary matrix and index (core conclusions, `file:line` evidence, risk warnings, and top recommendations) to prevent conversation context saturation; full archival, if needed, is aggregated and persisted by Pro or a write-capable agent.
 - **Spec Mirror Synchronization & Test Suite Reinforcement**: Enforces strict byte-level and newline synchronization between root mirror files and canonical definitions (`SKILL.md` <-> `skills/flash-dev/SKILL.md`, `AGENTS.md` <-> `rules/AGENTS.md`); adds `scripts/test-contract-dual-track.mjs` covering dual-track contract injection and concurrency safeguards.
 - **Preserves All v0.7.1 Capabilities**: Full Gemini 4 Neon and native Orchestrator support, AGY v1.5.11+ official tier mapping, git-free one-click upgrades (`update.mjs`), subagent thrashing circuit breaker, dynamic Audit slice quota, and batch file mutex.
 
@@ -81,10 +91,10 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ## Quick Install & Git-free Upgrade
 
-v0.7.2 publishes two independent release assets:
+v0.7.3 publishes two independent release assets:
 
-- `pro-flash-orchestrator-antigravity-v0.7.2.zip` (rooted at `pro-flash-orchestrator/`)
-- `pro-flash-orchestrator-codex-v0.7.2.zip` (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
+- `pro-flash-orchestrator-antigravity-v0.7.3.zip` (rooted at `pro-flash-orchestrator/`)
+- `pro-flash-orchestrator-codex-v0.7.3.zip` (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
 
 ### Option 1: Git-free Online / Offline Upgrade (Release Users)
 
@@ -93,7 +103,7 @@ v0.7.2 publishes two independent release assets:
 node "<install-directory>/scripts/update.mjs"
 
 # Offline upgrade from a local ZIP archive
-node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.2.zip"
+node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.3.zip"
 
 # Preview changes without writing
 node "<install-directory>/scripts/update.mjs" --dry-run
@@ -132,7 +142,7 @@ node scripts/install.mjs
 | **Sliced Multi-Read & Flood Guard** | `PreToolUse` (`read_file`, `view_file`) | Unsliced 300–800 line code reads clamp to `[1, 150]`; >800 line code or >400 line docs are denied. Minified files (>40KB, avg line >4KB) are blocked. Dependency/artifact paths are exempt. |
 | **Batch File Mutex Lock** | `PreToolUse` (`write_file`, `edit_file`, `apply_patch`) | Atomically checks and claims normalized targets in the parent's `batchFileClaims`. Same child may retry; cross-child conflicts are denied. New batches or audit IDs release claims. |
 | **Anti-Recursion & Anti-Polling** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `manage_subagents`) | Blocks nested subagent spawning and `manage_subagents(Action="list")` polling (`Action="kill"` allowed); enforces evidence-based child identity. |
-| **Contract Injection** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | Appends `[FLASH-WORKER]` and `[PRO-CONTRACT]` requiring a 4-column table and local test output (`research` returns structured summaries without writes). |
+| **Contract Injection** | `PreToolUse` (`invoke_subagent`, `define_subagent`, `send_message`) | Appends `[FLASH-WORKER]` and `[PRO-CONTRACT]` requiring a 4-column table and local test output for `self`, or structured deep research reports / concurrent executive matrices for `research` (strictly read-only without writes). |
 | **Command Guard & Thrashing Breaker** | `PreToolUse` (`run_command`) | Unwraps nested shells and pipelines; blocks unbounded `git log` and >400KB `cat`/`Get-Content` dumps (allows redirections and PowerShell `select` slicing); trips circuit breaker after `PRO_THRASH_LIMIT` (default 3) identical subagent commands. |
 | **Turn Wakeup & Drift Alert** | `PreInvocation` | Injects a transient 1-line wakeup in long sessions (`globalStep >= 8`) and alerts on deduplicated read/write drift (suppressed for Flash main and native Orchestrator). |
 | **Context Savings Telemetry** | `report.mjs` | `node scripts/report.mjs [--days 7]` summarizes startup strategies and estimates tokens saved (4 bytes/token) from denied reads and clamped slices (excluding `shadow` and test entries). |
@@ -154,12 +164,12 @@ Set mode in `.state/mode.json` (`{ "mode": "enforce" | "shadow" | "off" }`, prot
 | Platform | Status | Notes |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **Primary (Full Support)** | Production-verified lifecycle hooks, AGY `v1.5.11+` tier routing, Audit slice budget, and Git-free `update.mjs`. |
-| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.2.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
+| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.3.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
 | **Claude Code** | **Template Only** | Hook template provided in `hooks/claude-settings-hooks.json`; not live-validated. |
 
 ### Codex Standalone Setup
 
-Extract `pro-flash-orchestrator-codex-v0.7.2.zip`, enter its marketplace root, and run:
+Extract `pro-flash-orchestrator-codex-v0.7.3.zip`, enter its marketplace root, and run:
 
 ```bash
 node install.mjs
@@ -196,6 +206,7 @@ node scripts/test-capabilities.mjs  # AGY capability probe & v1.5.11+ tier mappi
 node scripts/test-install.mjs       # Runtime allowlist boundary & .state/ preservation tests
 node scripts/test-codex.mjs         # Offline Codex protocol & package allowlist tests
 node scripts/test-update.mjs        # Background update checker & in-place updater tests
+node scripts/test-contract-dual-track.mjs  # Dual-track acceptance contracts & [MULTI-RESEARCH] tests
 ```
 
 ### Packaging Runtime Archives
@@ -223,7 +234,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL template, audits & Codex acceptance evidence
 ├── hooks/                         # Claude Code & Codex CLI hook configurations
 ├── hooks.json                     # Antigravity lifecycle hook routing
-├── plugin.json                    # Antigravity plugin manifest (v0.7.2)
+├── plugin.json                    # Antigravity plugin manifest (v0.7.3)
 ├── rules/AGENTS.md                # Persistent architect & worker rules (mirrored at root AGENTS.md)
 ├── runtime-files.json             # Runtime distribution allowlist
 ├── skills/flash-dev/SKILL.md      # /flash-dev workflow skill (mirrored at root SKILL.md)

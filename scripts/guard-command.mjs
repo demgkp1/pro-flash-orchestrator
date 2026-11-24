@@ -425,7 +425,7 @@ function decide() {
       logDecision({ hook: 'guard-command', tool, mode, sub: true,
         action: mode === 'shadow' ? 'shadow-deny' : 'deny',
         rule: 'thrash-circuit-breaker', command: entry.command, count: consecutiveSame + 1, reason });
-      if (mode !== 'shadow') return deny(payload, reason);
+      if (mode !== 'shadow') return { decision: 'deny', reason };
     }
     const recordCommand = (state) => {
       state.subagentCommands = [...(Array.isArray(state.subagentCommands) ? state.subagentCommands : []), entry].slice(-10);

@@ -6,7 +6,7 @@ if(process.argv.includes('--platform') && process.argv[process.argv.indexOf('--p
   process.exit(process.argv.includes('--verify-worker') && result.status !== 'verified' ? 1 : 0);
 }
 /**
- * Pro-Flash Orchestrator v0.7.1 — doctor
+ * Pro-Flash Orchestrator — doctor
  *
  * Runs every hook with synthetic payloads and asserts the decision shape, so a
  * bad matcher / wrong arg key / broken script is caught before it silently
@@ -57,7 +57,7 @@ const DOCTOR_STATE_DIR = path.join(TMP, 'state');
 fs.mkdirSync(DOCTOR_STATE_DIR, { recursive: true, mode: 0o700 });
 process.env.PRO_STATE_DIR = DOCTOR_STATE_DIR;
 
-const { isSubAgent, logDecision, STATE_DIR, ensureStateDir, isExemptPath, readSession, writeSession } = await import('./lib.mjs');
+const { PLUGIN_VERSION, isSubAgent, logDecision, STATE_DIR, ensureStateDir, isExemptPath, readSession, writeSession } = await import('./lib.mjs');
 const { loadDecisions } = await import('./report.mjs');
 
 let passed = 0;
@@ -147,7 +147,7 @@ function mutexDispatch(parentId, turnId, input, typeName = 'self') {
   }), MUTEX_ENV);
 }
 
-console.log('\nPro-Flash Orchestrator v0.7.1 — doctor\n');
+console.log(`\nPro-Flash Orchestrator v${PLUGIN_VERSION} — doctor\n`);
 
 /* ------------------------------------------------------------ environment */
 check('诊断：能力快照来自隔离前的宿主环境', () => {
@@ -276,7 +276,7 @@ check('isSubAgent：transcript 不存在时才退回 lastUserInput 前缀判定'
 });
 
 /* ----------------------------------------------------------- subagent guard */
-const dispatch = (args) => basePayload({ toolCall: { name: 'invoke_subagent', args } });
+const dispatch = (args, extra = {}) => basePayload({ toolCall: { name: 'invoke_subagent', args }, ...extra });
 
 check('派单守门：Model="pro" 被降级为 flash', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: 'pro', Prompt: '实现用户模块' }));
@@ -286,16 +286,19 @@ check('派单守门：Model="pro" 被降级为 flash', () => {
 });
 
 check('派单守门：research + inherit → flash + 研究契约', () => {
-  const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }));
+  const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }, { turnId: 'doctor-research-1' }));
   assert(out.overwrite.Model === 'flash', `expected flash, got ${out.overwrite && out.overwrite.Model}`);
+  assert(String(out.overwrite.Prompt).includes('【深度研报契约】'), 'depth research contract missing');
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'research contract missing');
 });
 
 check('派单守门：research 契约提醒在消息中输出，不要求写 artifact', () => {
-  const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }));
+  const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }, { turnId: 'doctor-research-2' }));
   const prompt = String(out.overwrite && out.overwrite.Prompt);
+  assert(prompt.includes('【深度研报契约】'), 'depth research contract missing');
   assert(prompt.includes('直接在消息中完整结构化输出'), 'missing direct message instruction');
   assert(!prompt.includes('.research.md'), 'should not instruct research agent to write artifact');
+  assert(!prompt.includes('reports/<task>.md'), 'should not instruct research agent to write reports/<task>.md');
 });
 
 check('派单守门：双重编码的 Model（"pro"）仍能识别并降级', () => {
@@ -309,10 +312,11 @@ check('派单守门：flash_lite 自动升级重写为 flash', () => {
 });
 
 check('派单守门：当前主模型已是 flash 时，research 子代理仍统一指定为 flash', () => {
-  const payload = dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' });
+  const payload = dispatch({ TypeName: 'research', Model: 'inherit', Prompt: '读一下 PRD' }, { turnId: 'doctor-research-3' });
   payload.modelName = 'Gemini 3.8 Flash (High)';
   const out = runHook('guard-subagent.mjs', payload);
   assert(out.overwrite && out.overwrite.Model === 'flash', `expected Model=flash, got ${out.overwrite && out.overwrite.Model}`);
+  assert(String(out.overwrite.Prompt).includes('【深度研报契约】'), 'depth research contract should still be appended');
   assert(String(out.overwrite.Prompt).includes('结构化摘要'), 'contract should still be appended');
 });
 

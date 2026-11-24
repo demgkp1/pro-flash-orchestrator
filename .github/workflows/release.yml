@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (optional, e.g. v0.7.0)'
+        description: 'Release tag (optional, e.g. v0.7.3)'
         required: false
         default: ''
         type: string
@@ -40,6 +40,7 @@ jobs:
           node scripts/test-install.mjs
           node scripts/test-codex.mjs
           node scripts/test-update.mjs
+          node scripts/test-contract-dual-track.mjs
 
       - name: Package platform release archives
         env:

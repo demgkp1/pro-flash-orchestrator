@@ -76,7 +76,7 @@ function contractFor(typeName, payload, isMulti = false) {
   const link = /^[a-zA-Z0-9._:-]+$/.test(parent) && parent !== 'unknown' ? ` [PRO-PARENT:${parent}]` : '';
   if (typeName === 'research') {
     if (isMulti) {
-      return `${CONTRACT_MARKER} 【并发调研契约】完整调研报告请写入 \`${dir}/reports/<task>.md\`；消息中请直接结构化摘要输出：核心结论速查、关键文件与行号证据、风险隐患与 Top 优化建议。严禁回贴大段无关源码（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。${link}`;
+      return `${CONTRACT_MARKER} 【并发调研契约】本轮存在多代理并发调研，为避免洪泛主会话上下文，请仅输出高密度精要矩阵与索引：1. 核心结论速查；2. 关键文件与行号证据（file:line）；3. 核心风险隐患；4. Top 优化建议。严禁回贴大段无关源码（单段 ≤10 行）。因 research 属于只读探路代理，禁止尝试写文件，全部精要结论直接在消息中输出（如需完整归档由主控或写权限代理汇总落盘）。${link}`;
     }
     return `${CONTRACT_MARKER} 【深度研报契约】请按典范报告格式直接结构化摘要输出：1. 关键模块/任务深度剖析；2. 具体文件、行号与事实证据；3. 核心薄弱环节与风险诊断；4. 最有价值的 Top 优化建议。严禁粘贴大段无关源码原文（单段 ≤10 行）。因 research 属于只读探路代理，全部研究结论请直接在消息中完整结构化输出。${link}`;
   }
@@ -144,10 +144,13 @@ function decide() {
     return mode === 'enforce' ? { decision: 'deny', reason } : ALLOW;
   }
 
+  let admittedResearchSpawns = 0;
+
   if (!sub) {
     if (tool === INVOKE) {
       const convId = String((payload && payload.conversationId) || '');
       const isDoctor = convId === 'doctor-test' || convId.startsWith('doctor-') || Boolean(process.env.PRO_TEST || process.env.ARGON_TEST);
+      const typeName = clean(args.TypeName).toLowerCase();
       let quotaDeny = false;
       let denyReason = '';
 
@@ -159,6 +162,7 @@ function decide() {
           (userInput && state.lastSpawnUserInput !== userInput);
 
         let batchCount = isNewBatch ? 0 : Number(state.currentBatchSpawns || 0);
+        let researchBatchCount = isNewBatch ? 0 : Number(state.currentBatchResearchSpawns || 0);
 
         if (!isDoctor && batchCount >= 5) {
           quotaDeny = true;
@@ -168,6 +172,7 @@ function decide() {
         }
 
         batchCount += 1;
+        if (typeName === 'research') researchBatchCount += 1;
         if (isNewBatch) {
           state.phase = 'explore';
           state.auditSliceQuota = 0;
@@ -175,6 +180,8 @@ function decide() {
           state.batchFileClaims = {};
         }
         state.currentBatchSpawns = batchCount;
+        state.currentBatchResearchSpawns = researchBatchCount;
+        admittedResearchSpawns = researchBatchCount;
         state.spawnTurnKey = turnKey;
         if (userInput) {
           state.lastSpawnUserInput = userInput;
@@ -186,7 +193,7 @@ function decide() {
         state.writesSinceDispatch = [];
         state.strategy = strategy;
         state.maxReadsAllowed = Math.min(10, Math.max(baseReads, batchCount * 2));
-        if (clean(args.TypeName).toLowerCase() === 'self') {
+        if (typeName === 'self') {
           if (state.phase !== 'audit' || !state.auditBatchId) {
             state.auditBatchId = `${now}-${Math.random().toString(36).slice(2)}`;
             state.auditStartedAt = now;
@@ -248,9 +255,7 @@ function decide() {
       }
     }
 
-    const convId = String((payload && payload.conversationId) || '');
-    const session = convId ? readSession(convId) : null;
-    const isMulti = Boolean(session && Number(session.currentBatchSpawns || 0) > 1);
+    const isMulti = typeName === 'research' && (admittedResearchSpawns > 1 || /\[MULTI-RESEARCH\]/i.test(prompt));
     const nextPrompt = promptKey ? appendContract(prompt, contractFor(typeName, payload, isMulti)) : null;
     if (nextPrompt) overwrite[promptKey] = nextPrompt;
 

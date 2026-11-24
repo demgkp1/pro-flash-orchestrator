@@ -471,7 +471,7 @@ function capabilitySubagent(payload) {
   if (state.isSubAgent === true && state.subagentEvidence) return true;
   const input = String(p.lastUserInput || '');
   return /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input) ||
-    /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input) ||
+    /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|【深度研报契约】|【并发调研契约】|完成后仅回复四列表格|保持紧凑回报)/.test(input) ||
     (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender=')));
 }
 
@@ -939,7 +939,7 @@ export function isSubAgent(payload) {
     const contractInput =
       (input.includes('<SYSTEM_MESSAGE>') && (input.includes('[Message]') || input.includes('sender='))) ||
       /^\s*\[(?:FLASH-WORKER|PRO-CONTRACT|ARGON-CONTRACT)\]/.test(input) ||
-      /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|完成后仅回复四列表格|保持紧凑回报)/.test(input);
+      /\n\n\[(?:PRO-CONTRACT|ARGON-CONTRACT)\]\s+(?:汇报仅限结构化摘要|【深度研报契约】|【并发调研契约】|完成后仅回复四列表格|保持紧凑回报)/.test(input);
     if (!isDoctor && sess.isSubAgent === true && sess.subagentEvidence) {
       remember(sess.subagentEvidence, sess.parentConversationId || (contractInput ? senderParent : ''));
       return true;
@@ -1360,6 +1360,7 @@ export function sessionExists(conversationId) {
 function defaultSession(extra = {}) {
   return {
     currentBatchSpawns: 0,
+    currentBatchResearchSpawns: 0,
     lastSpawnAt: 0,
     maxReadsAllowed: 3,
     phase: 'explore',

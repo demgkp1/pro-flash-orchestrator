@@ -349,16 +349,27 @@ try {
     const call5 = invokeGuardCommand('node scripts/test-foo.mjs');
     assert(call5.permissionDecision !== 'deny', 'test-foo must be allowed after reset by different command');
 
-    // Verify decisions.jsonl records rule: 'thrash-circuit-breaker'
+    // Verify decisions.jsonl records rule: 'thrash-circuit-breaker' without duplicate/dirty deny rows
     const decisionsPath = path.join(test6Dir, 'decisions.jsonl');
     assert(fs.existsSync(decisionsPath), 'decisions.jsonl must exist');
     const decisions = fs.readFileSync(decisionsPath, 'utf8')
       .split('\n')
       .filter(Boolean)
       .map((line) => JSON.parse(line));
-    const thrashRecord = decisions.find((d) => d.rule === 'thrash-circuit-breaker');
-    assert(thrashRecord, 'decisions.jsonl must record rule thrash-circuit-breaker');
+    const thrashRecords = decisions.filter((d) => d.rule === 'thrash-circuit-breaker');
+    assert.equal(thrashRecords.length, 1, 'thrash circuit breaker must emit exactly one thrash-circuit-breaker record');
+    const thrashRecord = thrashRecords[0];
+    assert.equal(typeof thrashRecord.rule, 'string', 'thrash record rule must be a string');
+    assert.equal(thrashRecord.rule, 'thrash-circuit-breaker');
     assert.equal(thrashRecord.action, 'deny');
+
+    const denyRecords = decisions.filter((d) => d.action === 'deny');
+    assert.equal(denyRecords.length, 1, 'thrash circuit breaker must produce only one deny record');
+    for (const row of decisions) {
+      if (row.action === 'deny' || 'rule' in row) {
+        assert.equal(typeof row.rule, 'string', 'decision record rule must be a string, not an object');
+      }
+    }
 
     // Verify report.mjs output contains (死循环熔断)
     const reportEnv = {

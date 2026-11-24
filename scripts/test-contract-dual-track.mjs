@@ -2,9 +2,13 @@
 /**
  * Dual-track acceptance contract regression tests:
  * 1. research single dispatch -> 【深度研报契约】 (no "≤30 行")
- * 2. research multi/concurrent dispatch -> 【并发调研契约】
+ * 2. research multi/concurrent dispatch -> 【并发调研契约】 (read-only Plan A)
  * 3. self dispatch -> four-column table + concurrency safety boundaries
  * 4. send_message reminder -> updated dual-track reminder
+ * 5. define_subagent for read-only research -> 【深度研报契约】
+ * 6. mixed dispatch isolation (self then research in same turn) -> 【深度研报契约】
+ * 7. explicit [MULTI-RESEARCH] flag on first dispatch -> 【并发调研契约】
+ * 8. cold-start isSubAgent regex recognition for 【深度研报契约】 / 【并发调研契约】
  */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,6 +29,8 @@ for (const key of ['PRO_TEST', 'ARGON_TEST', 'PRO_HARNESS', 'PRO_WORKER_MODEL', 
 process.env.PRO_STATE_DIR = STATE;
 process.env.PRO_MODE = 'enforce';
 process.env.CODEX_HOME = path.join(TMP, 'codex-home');
+
+const { isSubAgent } = await import('./lib.mjs');
 
 const mainTranscript = path.join(TMP, 'main.jsonl');
 fs.writeFileSync(mainTranscript, JSON.stringify({ source: 'USER_EXPLICIT', content: 'task prompt' }) + '\n');
@@ -117,10 +123,12 @@ try {
 
     assert(prompt2.includes('[PRO-CONTRACT]'), 'Must include [PRO-CONTRACT]');
     assert(prompt2.includes('【并发调研契约】'), 'Must include 【并发调研契约】');
-    assert(prompt2.includes('reports/<task>.md'), 'Must instruct to write to reports/<task>.md');
-    assert(prompt2.includes('核心结论速查、关键文件与行号证据、风险隐患与 Top 优化建议'), 'Must include summary items');
+    assert(prompt2.includes('高密度精要矩阵'), 'Must include 高密度精要矩阵');
+    assert(prompt2.includes('禁止尝试写文件'), 'Must include 禁止尝试写文件');
+    assert(prompt2.includes('1. 核心结论速查；2. 关键文件与行号证据（file:line）；3. 核心风险隐患；4. Top 优化建议'), 'Must include summary items');
     assert(prompt2.includes('严禁回贴大段无关源码（单段 ≤10 行）'), 'Must include snippet limit');
     assert(prompt2.includes(`[PRO-PARENT:${convId}]`), 'Must include parent link');
+    assert(!prompt2.includes('reports/<task>.md'), 'Must NOT include reports/<task>.md');
     assert(!prompt2.includes('≤30 行'), 'Must NOT include ≤30 行');
   });
 
@@ -184,6 +192,59 @@ try {
     assert(out.overwrite && out.overwrite.SystemPrompt, 'Expected SystemPrompt to be overwritten');
     assert(out.overwrite.SystemPrompt.includes('【深度研报契约】'));
     assert(!out.overwrite.SystemPrompt.includes('≤30 行'));
+  });
+
+  // Test 6: Mixed dispatch isolation (self followed by research in same turn still gets depth contract)
+  await test('mixed dispatch isolation keeps depth research contract after self dispatch', () => {
+    const convId = 'mixed-dispatch-test';
+    const turnId = 'turn-mixed';
+
+    const outSelf = hook('guard-subagent.mjs', dispatch(convId, 'self', 'implement module A', { turnId }));
+    assert.equal(outSelf.decision, 'allow');
+
+    const outResearch = hook('guard-subagent.mjs', dispatch(convId, 'research', 'inspect module B', { turnId }));
+    assert.equal(outResearch.decision, 'allow');
+    assert(outResearch.overwrite && outResearch.overwrite.Prompt, 'Expected Prompt to be overwritten');
+    const prompt = outResearch.overwrite.Prompt;
+
+    assert(prompt.includes('【深度研报契约】'), 'First research dispatch after self must get 【深度研报契约】');
+    assert(!prompt.includes('【并发调研契约】'), 'Must NOT be misclassified as 【并发调研契约】');
+  });
+
+  // Test 7: Explicit [MULTI-RESEARCH] flag on first dispatch triggers 【并发调研契约】
+  await test('explicit [MULTI-RESEARCH] flag on first dispatch triggers concurrent contract', () => {
+    const convId = 'explicit-multi-research-test';
+    const turnId = 'turn-explicit-multi';
+
+    const out = hook('guard-subagent.mjs', dispatch(convId, 'research', '[MULTI-RESEARCH] inspect module C', { turnId }));
+    assert.equal(out.decision, 'allow');
+    assert(out.overwrite && out.overwrite.Prompt, 'Expected Prompt to be overwritten');
+    const prompt = out.overwrite.Prompt;
+
+    assert(prompt.includes('【并发调研契约】'), 'Must include 【并发调研契约】 on first dispatch with flag');
+    assert(prompt.includes('高密度精要矩阵'), 'Must include 高密度精要矩阵');
+    assert(prompt.includes('禁止尝试写文件'), 'Must include 禁止尝试写文件');
+    assert(!prompt.includes('【深度研报契约】'), 'Must NOT include 【深度研报契约】');
+    assert(!prompt.includes('reports/<task>.md'), 'Must NOT include reports/<task>.md');
+  });
+
+  // Test 8: Cold-start isSubAgent regex recognition without [FLASH-WORKER] prefix or transcriptPath
+  await test('cold-start isSubAgent recognizes depth and concurrent contracts without prefix', () => {
+    const depthPayload = {
+      conversationId: 'cold-start-depth-conv',
+      workspacePaths: [WORKSPACE],
+      lastUserInput: 'Explore architecture.\n\n[PRO-CONTRACT] 【深度研报契约】请按典范报告格式直接结构化摘要输出',
+    };
+    const concurrentPayload = {
+      conversationId: 'cold-start-concurrent-conv',
+      workspacePaths: [WORKSPACE],
+      lastUserInput: 'Explore module B.\n\n[PRO-CONTRACT] 【并发调研契约】本轮存在多代理并发调研',
+    };
+
+    assert(!depthPayload.lastUserInput.includes('[FLASH-WORKER]'));
+    assert(!concurrentPayload.lastUserInput.includes('[FLASH-WORKER]'));
+    assert.equal(isSubAgent(depthPayload), true, 'Must recognize cold-start 【深度研报契约】 as subagent');
+    assert.equal(isSubAgent(concurrentPayload), true, 'Must recognize cold-start 【并发调研契约】 as subagent');
   });
 } finally {
   try {

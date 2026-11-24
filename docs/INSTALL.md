@@ -40,6 +40,8 @@ node "{{MAINTENANCE_DIR}}/scripts/test-v060.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-capabilities.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-install.mjs"
 node "{{MAINTENANCE_DIR}}/scripts/test-codex.mjs"
+node "{{MAINTENANCE_DIR}}/scripts/test-update.mjs"
+node "{{MAINTENANCE_DIR}}/scripts/test-contract-dual-track.mjs"
 ```
 
 ## 决策复盘

@@ -17,7 +17,10 @@ Child source writes claim all targets atomically under the parent session lock. 
 
 Native Orchestrator models (or PRO_NATIVE_ORCHESTRATOR=1) use Lite Guard Mode. File-count guards and drift nudges are exempt; slicing, recursion, polling, command and report-contract guards remain active. The default Codex worker is gpt-5-mini. PRO_RESEARCH_MODEL and PRO_SELF_MODEL select task-specific workers, subject to provider verification.
 
-Workers must not spawn nested agents. Exploration workers report evidence and file:line references. Implementation workers return file, change, and focused test results; write an optional full report only when the assigned sandbox permits it. Do not paste large source listings into chat.
+Workers must not spawn nested agents. Keep code snippets to at most 10 lines and never paste large source listings into chat. Under the v0.7.3 dual-track acceptance contract:
+
+- **Read-only `research` workers (exploration / research / plan)**: Strictly read-only — never edit or write files (including report files). The 30-line output cap is lifted. A single research worker delivers a structured deep research report directly in its message (module analysis, verified facts with `file:line` evidence, risks/bottlenecks, and top recommendations). For concurrent multi-research fan-outs (optionally tagging the first dispatch with `[MULTI-RESEARCH]`), each worker returns a high-density summary matrix and `file:line` index directly in its message without writing files.
+- **Implementation (`self`) workers**: Edit only assigned disjoint files and run focused local tests only. Return a compact 4-column table (`| File | Line Range | Core Changes | Focused Test Command & Result |`) and keep any code snippet at most 10 lines.
 
 Only a user message containing [FORCE-PRO] may exempt expensive models. Never put an exemption into a worker task yourself. Unavailable worker models are reported and dispatch is blocked; do not silently fall back to the main model.
 

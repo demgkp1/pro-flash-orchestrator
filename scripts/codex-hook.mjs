@@ -89,7 +89,9 @@ try {
     if(!state) throw new Error('Cannot update agent lifecycle state');
     if(event === 'SubagentStart') {
       if (!lib.updateSession(identity.conversationId, s => { s.workerType = workerType; })) throw new Error('Cannot update worker type');
-      emit(context(event,'[FLASH-WORKER] Work only within your assigned files. Do not spawn nested agents. Return a compact result with file:line evidence and focused test results.'));
+      emit(context(event, workerType === 'research'
+        ? '[FLASH-WORKER] Read-only exploration worker. Do not edit files or spawn nested agents. Deliver a structured deep research report (module analysis, file:line evidence, risks, top recommendations) directly in your message; keep code snippets <=10 lines.'
+        : '[FLASH-WORKER] Work only within your assigned files. Do not spawn nested agents. Return a compact 4-column table (file, line range, core changes, focused test command & result); keep code snippets <=10 lines.'));
     } else {
       const parent = lib.readSession(identity.root);
       emit(runGuard('pre-invocation.mjs', { hook_event_name: event, session_id: identity.root,
@@ -119,13 +121,13 @@ try {
       (lib.isNativeOrchestrator(payload)
         ? 'Native Orchestrator Lite Guard Mode: file-count limits are exempt; recursion, polling, command and contract guards remain active. '
         : 'For engineering work, follow the bundled flash-dev skill: keep decisions and up to two benchmark edits in the main agent; delegate independent exploration and peripheral edits. ')+
-      'Use native spawn and wait tools, return compact evidence and focused tests. Only the user may enable [FORCE-PRO]. '+
+      'Use native spawn and wait tools; research workers deliver structured deep reports (compact summary matrix in concurrent multi-research without writing files) while implementation workers return a 4-column table and focused tests. Only the user may enable [FORCE-PRO]. '+
       (!check.verified ? 'Worker dispatch is blocked until a real model verification succeeds; other guards remain active.' : '');
     emit(mode === 'shadow' || identity.sub ? {} : context(event,text));
   } else if(event === 'UserPromptSubmit') {
     const updated=lib.updateSession(identity.root,s=>{
       s.lastUserInput=String(raw.prompt || '');s.lastUserTurnId=String(raw.turn_id || '');
-      s.userTurnSequence=Number(s.userTurnSequence || 0)+1;s.currentBatchSpawns=0;
+      s.userTurnSequence=Number(s.userTurnSequence || 0)+1;s.currentBatchSpawns=0;s.currentBatchResearchSpawns=0;
       s.spawnTurnKey='';s.lastSpawnUserInput='';
       s.readsSinceDispatch=[];s.writesSinceDispatch=[];s.maxReadsAllowed=3;
       s.phase='explore';s.auditSliceQuota=0;
