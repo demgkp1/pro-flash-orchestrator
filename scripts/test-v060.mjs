@@ -102,7 +102,7 @@ await test('report discards malformed JSON values and rejects invalid day window
   }
 });
 await test('release metadata, root prompt mirrors and legacy matcher sets stay synchronized',()=>{
-  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.3');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.4');
   for(const [mirror,canonical] of [['SKILL.md','skills/flash-dev/SKILL.md'],['AGENTS.md','rules/AGENTS.md']]) {
     assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),
       fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n'));

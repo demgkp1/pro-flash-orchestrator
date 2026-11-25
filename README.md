@@ -5,9 +5,9 @@ A lifecycle-hook orchestration engine for Google Antigravity, with an independen
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. It keeps the flagship model (Pro) focused on architectural decisions and benchmark implementations while offloading exploration, peripheral expansion, and tests to a lightweight worker (Flash / Hydrogen) via deterministic physical hooks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.3-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.4-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#multi-platform-support--acceptance-status)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#diagnostics--tests)
+[![Tests](https://img.shields.io/badge/Doctor-117%2F117%20Passed-green.svg)](#diagnostics--tests)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -59,6 +59,17 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ---
 
+## What's New in v0.7.4
+
+- **Stable Codex Git Marketplace**: After a stable GitHub Release succeeds, its complete Codex package is published to the `codex-marketplace` ref, with archive contents and manifest versions checked against the release tag.
+- **Explicit Local Fallback & Transactional Migration**: Git installation preflights the stable ref; failed migration rolls back the marketplace source, hooks, controls, and plugin state. Use `--local` explicitly for a local deployment.
+- **Bridge Follows the New Git Snapshot**: The compatibility bridge resolves the configured Git deployment instead of continuing to execute the old ZIP snapshot.
+- **Correct Parent/Worker Identity**: `parent_tool_use_id` alone no longer misclassifies a parent session as a worker.
+- **AGY Update Diagnostics**: Background checks record redacted error codes; they do not automatically install or upgrade. Run the installed `update.mjs` explicitly to upgrade.
+- **Acceptance Status**: Native UI upgrades remain unvalidated. See the bilingual [release notes](docs/releases/v0.7.4.md).
+
+---
+
 ## What's New in v0.7.3
 
 - **Option A Pure Read-Only Dual-Track Contract**: Enforces strict read-only execution without file writes for concurrent `research` dispatches, returning high-density executive matrices while delegating full archival to Pro or write-capable agents.
@@ -91,10 +102,10 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ## Quick Install & Git-free Upgrade
 
-v0.7.3 publishes two independent release assets:
+v0.7.4 release assets:
 
-- `pro-flash-orchestrator-antigravity-v0.7.3.zip` (rooted at `pro-flash-orchestrator/`)
-- `pro-flash-orchestrator-codex-v0.7.3.zip` (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
+- [pro-flash-orchestrator-antigravity-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-antigravity-v0.7.4.zip) (rooted at `pro-flash-orchestrator/`)
+- [pro-flash-orchestrator-codex-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-codex-v0.7.4.zip) (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
 
 ### Option 1: Git-free Online / Offline Upgrade (Release Users)
 
@@ -103,7 +114,7 @@ v0.7.3 publishes two independent release assets:
 node "<install-directory>/scripts/update.mjs"
 
 # Offline upgrade from a local ZIP archive
-node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.3.zip"
+node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.4.zip"
 
 # Preview changes without writing
 node "<install-directory>/scripts/update.mjs" --dry-run
@@ -164,17 +175,25 @@ Set mode in `.state/mode.json` (`{ "mode": "enforce" | "shadow" | "off" }`, prot
 | Platform | Status | Notes |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **Primary (Full Support)** | Production-verified lifecycle hooks, AGY `v1.5.11+` tier routing, Audit slice budget, and Git-free `update.mjs`. |
-| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.3.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
+| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.4.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
 | **Claude Code** | **Template Only** | Hook template provided in `hooks/claude-settings-hooks.json`; not live-validated. |
 
 ### Codex Standalone Setup
 
-Extract `pro-flash-orchestrator-codex-v0.7.3.zip`, enter its marketplace root, and run:
+Once the first stable marketplace publication is available, install or migrate from the source repository root using the stable `codex-marketplace` ref:
 
 ```bash
-node install.mjs
+node scripts/install.mjs --platform codex --git
+```
+
+For an explicit local fallback, extract `pro-flash-orchestrator-codex-v0.7.4.zip`, enter its marketplace root, and run:
+
+```bash
+node install.mjs --local
 node doctor.mjs
 ```
+
+From the source repository root, the equivalent local command is `node scripts/install.mjs --platform codex --local`. Git preflight failures preserve the old deployment; there is no silent local fallback. Native UI upgrades remain unvalidated.
 
 Review and trust the six Pro-Flash entries in desktop **Settings > Hooks** or CLI `/hooks`, configure the worker/provider in `CODEX_HOME/plugin-data/pro-flash-orchestrator/config.json`, then verify:
 
@@ -188,6 +207,8 @@ To unregister: `node install.mjs --uninstall` (preserves `CODEX_HOME/plugin-data
 ---
 
 ## Diagnostics & Tests
+
+Local release gates passed: Doctor **117/117**, regressions **40/40**, v060 **48/48**, capabilities **45/45**, install **8/8**, Codex **45/45**, update **6/6**, check-update-worker **9/9**, dual-track **8/8**, and marketplace **21/21**. Concurrency passed; its total count was not reported.
 
 ### Health Check & Telemetry
 
@@ -234,7 +255,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL template, audits & Codex acceptance evidence
 ├── hooks/                         # Claude Code & Codex CLI hook configurations
 ├── hooks.json                     # Antigravity lifecycle hook routing
-├── plugin.json                    # Antigravity plugin manifest (v0.7.3)
+├── plugin.json                    # Antigravity plugin manifest (v0.7.4)
 ├── rules/AGENTS.md                # Persistent architect & worker rules (mirrored at root AGENTS.md)
 ├── runtime-files.json             # Runtime distribution allowlist
 ├── skills/flash-dev/SKILL.md      # /flash-dev workflow skill (mirrored at root SKILL.md)

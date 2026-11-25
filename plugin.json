@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
   "displayName": "pro-flash-orchestrator",
-  "version": "0.7.3",
+  "version": "0.7.4",
   "license": "MIT",
-  "description": "v0.7.3 Pro 主控与轻量助手分流：强化纯只读双轨验收契约（工程实现四列表格 + 深度研报 / 并发精要矩阵防洪泛）、独立 research 并发计数与 [MULTI-RESEARCH] 首单标记、动态版本号注入、Codex 双轨同步与死循环熔断日志修复；完整支持 Gemini 4 Neon 与 Orchestrator (Neon)、AGY v1.5.11+ 官方档位映射、免 Git 一键升级与同批源码互斥锁。",
+  "description": "v0.7.4 Pro 主控与轻量助手分流：新增 Codex Git marketplace 正式版本发布、事务式安装迁移与升级兼容桥；修复 Codex 父工具关联误判子代理身份，补充 AGY 后台版本检测脱敏失败诊断；保留纯只读双轨验收契约、Gemini 4 动态路由、免 Git 一键升级与同批源码互斥锁。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",

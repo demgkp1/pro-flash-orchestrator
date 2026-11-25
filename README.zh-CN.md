@@ -5,9 +5,9 @@
 面向通用软件工程、代码审查、Bug 排查、重构与文档研读。通过确定性的物理 Hook 守门，让旗舰主模型（Pro）聚焦核心架构决策与标杆实现，并将多文件探路、外围扩写与单元测试分流给轻量助手（Flash / Hydrogen）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.3-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.4-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#多平台支持与验收状态)
-[![Tests](https://img.shields.io/badge/Offline%20Suites-8%20Passed-green.svg)](#诊断与测试)
+[![Tests](https://img.shields.io/badge/Doctor-117%2F117%20Passed-green.svg)](#诊断与测试)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -59,6 +59,17 @@
 
 ---
 
+## v0.7.4 最新特性
+
+- **Codex 稳定 Git Marketplace**：正式稳定 GitHub Release 成功后，将对应的完整 Codex 包发布至 `codex-marketplace` ref，并校验归档内容、清单版本与发布标签一致。
+- **显式 Local 回退与迁移事务回滚**：Git 安装先预检稳定 ref；迁移失败时回滚 Marketplace 来源、Hook、控制配置与插件状态。需要本地部署时显式使用 `--local`。
+- **兼容桥跟随新 Git Snapshot**：兼容桥解析当前配置的 Git 部署目录，避免继续运行旧 ZIP 快照。
+- **父会话身份修复**：`parent_tool_use_id` 不再单独作为 Worker 身份依据，避免误认父会话。
+- **AGY 更新诊断**：后台检测记录脱敏错误码，不会后台自动安装或升级；升级仍需显式运行已安装插件的 `update.mjs`。
+- **验收状态**：真实 UI 升级尚未验收。详见中英双语[发布说明](docs/releases/v0.7.4.md)。
+
+---
+
 ## v0.7.3 最新特性
 
 - **方案 A 纯只读双轨契约**：进一步固化 `research` 并发调研的纯只读约束（禁止写文件），同轮并发仅输出高密度精要矩阵，完整归档统一交由主控或具备写权限的代理完成。
@@ -91,10 +102,10 @@
 
 ## 快速安装与免 Git 升级
 
-v0.7.3 发布两个独立的 Release 资产包：
+v0.7.4 发布包：
 
-- `pro-flash-orchestrator-antigravity-v0.7.3.zip`（根目录为 `pro-flash-orchestrator/`）
-- `pro-flash-orchestrator-codex-v0.7.3.zip`（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-antigravity-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-antigravity-v0.7.4.zip)（根目录为 `pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-codex-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-codex-v0.7.4.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
 
 ### 方式一：Release 用户免 Git 在线 / 离线升级
 
@@ -103,7 +114,7 @@ v0.7.3 发布两个独立的 Release 资产包：
 node "<插件安装目录>/scripts/update.mjs"
 
 # 使用本地已下载的 ZIP 包离线升级
-node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.3.zip"
+node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.4.zip"
 
 # 预览变更但不写入磁盘
 node "<插件安装目录>/scripts/update.mjs" --dry-run
@@ -164,17 +175,25 @@ node scripts/install.mjs
 | 平台 | 当前状态 | 说明 |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **主力完整支持** | 生产级生命周期 Hook 守门、AGY `v1.5.11+` 档位路由、Audit 动态切片配额与免 Git `update.mjs`。 |
-| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.3.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
+| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.4.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
 | **Claude Code** | **仅提供配置模板** | 提供 `hooks/claude-settings-hooks.json` 钩子适配模板，尚未进行实机真实验证。 |
 
-### Codex 独立本地 Marketplace 安装
+### Codex 独立 Marketplace 安装
 
-解压 `pro-flash-orchestrator-codex-v0.7.3.zip` 并进入 Marketplace 根目录：
+首次稳定 Marketplace 发布可用后，在源码仓库根目录安装或迁移至稳定 `codex-marketplace` ref：
 
 ```bash
-node install.mjs
+node scripts/install.mjs --platform codex --git
+```
+
+需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.7.4.zip` 并进入 Marketplace 根目录：
+
+```bash
+node install.mjs --local
 node doctor.mjs
 ```
+
+源码仓库根目录的等价本地命令为 `node scripts/install.mjs --platform codex --local`。Git 预检失败会保留旧部署，不会静默回退到本地安装。真实 UI 升级尚未验收。
 
 在桌面端 **Settings > Hooks** 或 CLI `/hooks` 中审阅并信任六个 Pro-Flash Hook，在 `CODEX_HOME/plugin-data/pro-flash-orchestrator/config.json` 中配置对应提供商的 Worker 模型后运行验证：
 
@@ -188,6 +207,8 @@ node doctor.mjs
 ---
 
 ## 诊断与测试
+
+本地发布门禁已通过：Doctor **117/117**、regressions **40/40**、v060 **48/48**、capabilities **45/45**、install **8/8**、Codex **45/45**、update **6/6**、check-update-worker **9/9**、dual-track **8/8**、marketplace **21/21**；concurrency 全部通过，未提供总数。
 
 ### 环境体检与省流复盘
 
@@ -234,7 +255,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL 模板、审计记录与 Codex 验收证据
 ├── hooks/                         # Claude Code 与 Codex CLI 钩子适配配置
 ├── hooks.json                     # Antigravity 生命周期钩子路由
-├── plugin.json                    # Antigravity 插件清单 (v0.7.3)
+├── plugin.json                    # Antigravity 插件清单 (v0.7.4)
 ├── rules/AGENTS.md                # 常驻架构师与助手规范（根目录 AGENTS.md 为其镜像）
 ├── runtime-files.json             # 运行时分发白名单
 ├── skills/flash-dev/SKILL.md      # /flash-dev 工作流技能（根目录 SKILL.md 为其镜像）
