@@ -15,6 +15,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: codex-marketplace-release
+  cancel-in-progress: false
+
 jobs:
   release:
     name: Package and Release
@@ -40,12 +44,15 @@ jobs:
           node scripts/test-install.mjs
           node scripts/test-codex.mjs
           node scripts/test-update.mjs
+          node scripts/test-check-update-worker.mjs
           node scripts/test-contract-dual-track.mjs
+          node scripts/test-codex-marketplace.mjs
 
       - name: Package platform release archives
         env:
           RELEASE_TAG: ${{ inputs.tag }}
         run: |
+          node --input-type=module -e 'import fs from "node:fs"; const version=JSON.parse(fs.readFileSync("plugin.json","utf8")).version; if(process.env.GITHUB_REF_TYPE==="tag" && process.env.GITHUB_REF_NAME!=="v"+version) throw new Error("Release tag and plugin.json version differ"); if(process.env.RELEASE_TAG && process.env.RELEASE_TAG!=="v"+version) throw new Error("Requested release tag and plugin.json version differ");'
           if [ -n "$RELEASE_TAG" ]; then
             node scripts/package.mjs --runtime --platform antigravity --out-dir dist --tag "$RELEASE_TAG"
             node scripts/package.mjs --runtime --platform codex --out-dir dist --tag "$RELEASE_TAG"
@@ -87,3 +94,16 @@ jobs:
           else
             gh release create "$GITHUB_REF_NAME" dist/*.zip --verify-tag --title "pro-flash-orchestrator-$GITHUB_REF_NAME" --generate-notes
           fi
+
+      - name: Publish stable Codex Git marketplace
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" --json tagName,isDraft,isPrerelease > "$RUNNER_TEMP/pfo-codex-release.json"
+          node scripts/publish-codex-marketplace.mjs \
+            --tag "$GITHUB_REF_NAME" \
+            --archive "dist/pro-flash-orchestrator-codex-$GITHUB_REF_NAME.zip" \
+            --release-info "$RUNNER_TEMP/pfo-codex-release.json" \
+            --branch codex-marketplace \
+            --push

@@ -13,9 +13,65 @@ import { fileURLToPath } from 'node:url';
 import {
   UPDATE_CHECK_FILE,
   PLUGIN_VERSION,
-  safeWriteFileSync,
   ensureStateDir,
 } from './lib.mjs';
+
+const ERROR_CODES = new Set([
+  'ENOENT', 'EACCES', 'EPERM', 'ENOTDIR', 'EISDIR', 'ENOSPC', 'EROFS',
+  'ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT',
+  'ABORT_ERR', 'UND_ERR_CONNECT_TIMEOUT', 'HTTP_ERROR',
+]);
+
+function summarizeError(error) {
+  if (error instanceof SyntaxError) return { code: 'INVALID_JSON' };
+  for (const code of [error?.code, error?.cause?.code]) {
+    if (ERROR_CODES.has(code)) return { code };
+  }
+  if (error?.name === 'AbortError' || error?.name === 'TimeoutError') {
+    return { code: 'TIMEOUT' };
+  }
+  return { code: 'CHECK_FAILED' };
+}
+
+// Keep both cache writes and failed diagnostic writes silent. Rename protects
+// the last successful cache if the replacement cannot be persisted.
+function writeCheckRecord(checkFile, record) {
+  const temporary = `${checkFile}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(checkFile), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(temporary, JSON.stringify(record, null, 2), {
+      encoding: 'utf8', mode: 0o600, flag: 'wx',
+    });
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        fs.renameSync(temporary, checkFile);
+        break;
+      } catch (error) {
+        if (attempt === 2) throw error;
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 15);
+      }
+    }
+  } finally {
+    try { fs.unlinkSync(temporary); } catch { /* already renamed or unavailable */ }
+  }
+}
+
+function recordFailure(checkFile, lastAttemptAt, error) {
+  try {
+    let cached = {};
+    try {
+      const parsed = JSON.parse(fs.readFileSync(checkFile, 'utf8'));
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) cached = parsed;
+    } catch { /* No usable successful cache yet. */ }
+    writeCheckRecord(checkFile, {
+      ...cached,
+      lastAttemptAt,
+      lastError: summarizeError(error),
+    });
+  } catch {
+    // Diagnostics are best-effort and must never mask the original failure.
+  }
+}
 
 /**
  * Checks the latest release from GitHub API or local mock, caching the result.
@@ -31,6 +87,16 @@ export async function checkLatestRelease({
   checkFile = UPDATE_CHECK_FILE,
   currentVersion = PLUGIN_VERSION,
 } = {}) {
+  const lastAttemptAt = Date.now();
+  try {
+    return await checkAndCacheRelease({ apiUrl, checkFile, currentVersion });
+  } catch (error) {
+    recordFailure(checkFile, lastAttemptAt, error);
+    throw error;
+  }
+}
+
+async function checkAndCacheRelease({ apiUrl, checkFile, currentVersion }) {
   let rawJson = '';
 
   if (typeof apiUrl === 'string' && apiUrl.startsWith('file://')) {
@@ -60,7 +126,9 @@ export async function checkLatestRelease({
         signal: AbortSignal.timeout(3500),
       });
       if (!res.ok) {
-        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        const error = new Error(`HTTP ${res.status}: ${res.statusText}`);
+        error.code = 'HTTP_ERROR';
+        throw error;
       }
       rawJson = await res.text();
     }
@@ -95,7 +163,7 @@ export async function checkLatestRelease({
     assetUrl,
   };
 
-  safeWriteFileSync(checkFile, JSON.stringify(record, null, 2));
+  writeCheckRecord(checkFile, record);
   return record;
 }
 

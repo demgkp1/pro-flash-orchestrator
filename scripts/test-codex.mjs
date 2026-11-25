@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-/** Offline Codex protocol/package tests. These are not a claim of live validation. */
+/** Offline Codex protocol/package tests. Use --role-and-package for focused role/package regressions. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync} from 'node:child_process';
+import {execFile,spawnSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'pfo-codex-tests-'));
@@ -24,19 +24,41 @@ runtime.writeJson(path.join(control,'config.json'),{workerModel:'gpt-6-luna',wor
 const cfg=runtime.workerConfig();
 function proof(cwd=temp){const value={status:'verified',workerModel:cfg.workerModel,workerReasoningEffort:cfg.workerReasoningEffort,providerFingerprint:runtime.providerIdentity(cwd).fingerprint};runtime.writeJson(verificationFile,value);runtime.writeJson(path.join(control,'worker-verification.json'),value);}
 function clearProof(){for(const file of [verificationFile,path.join(control,'worker-verification.json')])if(fs.existsSync(file))fs.unlinkSync(file);}
-function call(event,extra={},mode='enforce') {
+function call(event,extra={},mode='enforce',harness='codex') {
   const p={hook_event_name:event,session_id:'root',turn_id:'turn-1',model:'gpt-6.1-sol',cwd:temp,...extra};
-  const out=spawnSync(process.execPath,[path.join(root,'scripts/codex-hook.mjs')],{input:JSON.stringify(p),encoding:'utf8',timeout:15000,
-    env:{...process.env,PRO_HARNESS:'codex',PRO_MODE:mode,PLUGIN_ROOT:root}});
+  const script=harness==='claude'?'guard-subagent.mjs':'codex-hook.mjs';
+  const out=spawnSync(process.execPath,[path.join(root,'scripts',script)],{input:JSON.stringify(p),encoding:'utf8',timeout:15000,windowsHide:true,
+    env:{...process.env,PRO_HARNESS:harness,PRO_MODE:mode,PLUGIN_ROOT:root}});
   assert.ifError(out.error);assert.equal(out.status,0,out.stderr);return JSON.parse(out.stdout);
+}
+function concurrentCall(event,extra={}) {
+  const p={hook_event_name:event,session_id:'root',turn_id:'turn-1',model:'gpt-6.1-sol',cwd:temp,...extra};
+  return new Promise((resolve,reject)=>{
+    const child=execFile(process.execPath,[path.join(root,'scripts/codex-hook.mjs')],{encoding:'utf8',timeout:15000,windowsHide:true,
+      env:{...process.env,PRO_HARNESS:'codex',PRO_MODE:'enforce',PLUGIN_ROOT:root}},(error,stdout,stderr)=>{
+      if(error){reject(new Error('Native hook failed: '+stderr,{cause:error}));return;}
+      try {resolve(JSON.parse(stdout));} catch(error){reject(error);}
+    });
+    child.stdin.on('error',reject);
+    child.stdin.end(JSON.stringify(p));
+  });
 }
 const denied=x=>x.hookSpecificOutput?.permissionDecision==='deny';
 const patch=files=>'*** Begin Patch\n'+files.map(f=>'*** Update File: '+f+'\n@@\n-old\n+new').join('\n')+'\n*** End Patch';
 const addPatch=file=>'*** Begin Patch\n*** Add File: '+file+'\n+new\n*** End Patch';
 const deletePatch=file=>'*** Begin Patch\n*** Delete File: '+file+'\n*** End Patch';
 const movePatch=(from,to)=>'*** Begin Patch\n*** Update File: '+from+'\n*** Move to: '+to+'\n@@\n-old\n+new\n*** End Patch';
+const focusedNames=new Set([
+  'native parent tool correlations do not change caller role',
+  'parallel native parent tool correlations share one spawn batch',
+  'worker identity is isolated and nested spawning is blocked',
+  'transcript metadata recognizes actual spawned-worker origin',
+  'Claude parent tool correlation still identifies a worker',
+  'both platform ZIPs use exact independent allowlists',
+]);
+const focused=process.argv.includes('--role-and-package');
 let passed=0;const failures=[];
-async function test(name,fn){try{await fn();passed++;console.log('PASS '+name);}catch(e){failures.push(name);console.error('FAIL '+name+': '+e.stack);}}
+async function test(name,fn){if(focused&&!focusedNames.has(name))return;try{await fn();passed++;console.log('PASS '+name);}catch(e){failures.push(name);console.error('FAIL '+name+': '+e.stack);}}
 try {
 await test('live evidence parser recognizes CLI and app-server collaboration items',()=>{
  const cli={type:'collab_tool_call',tool:'spawn_agent',model:'gpt-6-luna',reasoning_effort:'low',prompt:'[PRO-CONTRACT] bounded work',status:'completed'};
@@ -72,6 +94,43 @@ await test('namespaced native spawn preserves message prompt context and forced 
  call('UserPromptSubmit',{session_id:'native-forced',turn_id:'native-2',prompt:'[FORCE-PRO] retain requested profile'});
  const forced=call('PreToolUse',{session_id:'native-forced',turn_id:'native-2',tool_name:'functions.collaboration.spawn_agent',tool_input:{prompt:'Review architecture',context:'keep-context',model:'gpt-6.1-sol',reasoning_effort:'high'}}).hookSpecificOutput.updatedInput;
  assert(forced.prompt.includes('[PRO-CONTRACT]'));assert.equal(forced.context,'keep-context');assert.equal(forced.model,'gpt-6.1-sol');assert.equal(forced.reasoning_effort,'high');
+});
+await test('native parent tool correlations do not change caller role',()=>{
+ proof();
+ const session_id='role-parent-sequential';
+ call('UserPromptSubmit',{session_id,prompt:'Dispatch three bounded tasks'});
+ const names=['spawn_agent','functions.collaboration.spawn_agent','collaborationspawn_agent'];
+ for(let i=0;i<names.length;i++) {
+  const out=call('PreToolUse',{session_id,agent_id:session_id,tool_name:names[i],
+   ...(i===1?{parent_tool_use_id:'outer-functions-exec'}:{}),
+   tool_input:{message:'[FLASH-WORKER][PRO-CONTRACT] bounded task '+i,task_name:'role_task_'+i}});
+  assert.equal(out.hookSpecificOutput?.permissionDecision,'allow',JSON.stringify(out));
+  assert.equal(out.hookSpecificOutput.updatedInput.model,cfg.workerModel);
+  assert(out.hookSpecificOutput.updatedInput.message.includes('[PRO-PARENT:'+session_id+']'));
+ }
+ const state=runtime.readJson(path.join(process.env.PRO_STATE_DIR,'sessions',session_id+'.json'));
+ assert.equal(state.currentBatchSpawns,3);assert.equal(state.auditSliceQuota,6);
+ assert.notEqual(state.isSubAgent,true);assert.equal(state.parentConversationId,undefined);
+ assert.equal(state.lastUserInput,'Dispatch three bounded tasks');
+});
+await test('parallel native parent tool correlations share one spawn batch',async()=>{
+ proof();
+ const session_id='role-parent-parallel';
+ call('UserPromptSubmit',{session_id,prompt:'Dispatch three concurrent bounded tasks'});
+ const outcomes=await Promise.allSettled([0,1,2].map(i=>concurrentCall('PreToolUse',{
+  session_id,tool_name:'collaboration__spawn_agent',...(i===1?{parent_tool_use_id:'shared-functions-exec'}:{}),
+  tool_input:{message:'[FLASH-WORKER][PRO-CONTRACT] concurrent task '+i,task_name:'parallel_role_'+i},
+ })));
+ for(const outcome of outcomes) {
+  assert.equal(outcome.status,'fulfilled',String(outcome.reason));
+  assert.equal(outcome.value.hookSpecificOutput?.permissionDecision,'allow',JSON.stringify(outcome.value));
+  assert.equal(outcome.value.hookSpecificOutput.updatedInput.model,cfg.workerModel);
+  assert(outcome.value.hookSpecificOutput.updatedInput.message.includes('[PRO-PARENT:'+session_id+']'));
+ }
+ const state=runtime.readJson(path.join(process.env.PRO_STATE_DIR,'sessions',session_id+'.json'));
+ assert.equal(state.currentBatchSpawns,3);assert.equal(state.auditSliceQuota,6);
+ assert.notEqual(state.isSubAgent,true);assert.equal(state.parentConversationId,undefined);
+ assert.equal(state.lastUserInput,'Dispatch three concurrent bounded tasks');
 });
 await test('spawn quota is isolated per session and resets on the next user turn',()=>{
  for(const session_id of ['quota-a','quota-b']) {
@@ -171,8 +230,9 @@ await test('hooks.json is protected for native patch add update delete and both 
  }
 });
 await test('worker identity is isolated and nested spawning is blocked',()=>{
- const worker={agent_id:'child-1',model:cfg.workerModel};
- assert(denied(call('PreToolUse',{...worker,tool_name:'spawn_agent',tool_input:{message:'nested'}})));
+ const worker={agent_id:'child-1',model:cfg.workerModel,parent_tool_use_id:'worker-tool-correlation'};
+ const nested=call('PreToolUse',{...worker,tool_name:'spawn_agent',tool_input:{message:'nested'}});
+ assert(denied(nested));assert(nested.hookSpecificOutput.permissionDecisionReason.includes('Subagents cannot spawn'));
  const log=fs.readFileSync(path.join(process.env.PRO_STATE_DIR,'decisions.jsonl'),'utf8');assert(log.includes('"hook":"codex-worker","action":"deny-recursion"'));
  assert(!denied(call('PreToolUse',{...worker,tool_name:'apply_patch',tool_input:{command:patch(['d.js','e.js','f.js'])}})));
 });
@@ -180,7 +240,13 @@ await test('transcript metadata recognizes actual spawned-worker origin',()=>{
  const file=path.join(temp,'worker.jsonl');
  fs.writeFileSync(file,JSON.stringify({type:'session_meta',payload:{id:'child-meta',source:{subagent:{thread_spawn:{parent_thread_id:'root'}}}}})+'\n');
  assert(runtime.sessionIdentity({session_id:'root',transcript_path:file}).sub);
- assert(denied(call('PreToolUse',{transcript_path:file,model:cfg.workerModel,tool_name:'spawn_agent',tool_input:{message:'nested'}})));
+ const nested=call('PreToolUse',{transcript_path:file,model:cfg.workerModel,parent_tool_use_id:'transcript-tool-correlation',tool_name:'spawn_agent',tool_input:{message:'nested'}});
+ assert(denied(nested));assert(nested.hookSpecificOutput.permissionDecisionReason.includes('Subagents cannot spawn'));
+});
+await test('Claude parent tool correlation still identifies a worker',()=>{
+ const out=call('PreToolUse',{session_id:'claude-role-parent',model:'claude-opus',parent_tool_use_id:'claude-parent-tool',
+  lastUserInput:'An ordinary task without worker markers',tool_name:'Agent',tool_input:{prompt:'Nested task'}},'enforce','claude');
+ assert(denied(out));assert(out.hookSpecificOutput.permissionDecisionReason.includes('递归守门'));
 });
 await test('native wait and close remain permitted',()=>{
  for(const name of ['wait','wait_agent','close_agent','interrupt_agent'])assert(!denied(call('PreToolUse',{tool_name:name,tool_input:{id:'child-1'}})));
@@ -332,12 +398,18 @@ await test('native list_agents aliases cannot bypass the main polling guard',()=
  }
 });
 await test('both platform ZIPs use exact independent allowlists',()=>{
+ const updaterFiles=['scripts/update.mjs','scripts/check-update-worker.mjs'];
+ const runtimeFiles=maintenance.codexRuntimeFiles().map(e=>e.to);
+ for(const file of updaterFiles)assert(!runtimeFiles.includes(file),'Codex runtime must exclude '+file);
  const codex=pack.createReleaseZip({runtime:true,platform:'codex',worktree:true,tag:'v0.6.1',outFile:path.join(temp,'codex.zip')});
  pack.verifyZipLayout(codex.outFile,maintenance.codexMarketplaceFiles().map(e=>e.to),{prefix:'pro-flash-orchestrator-codex/',required:['plugins/pro-flash-orchestrator/plugin.json']});
  const entries=pack.listZipEntries(codex.outFile);
+ for(const file of updaterFiles)assert(!entries.some(e=>e.endsWith('/'+file)),'Codex ZIP must exclude '+file);
  assert(!entries.some(e=>e.includes('scripts/install.mjs')||e.includes('scripts/test-')||e.includes('scripts/doctor.mjs')||e.includes('scripts/session-start.mjs')));
  const native=pack.createReleaseZip({runtime:true,platform:'antigravity',worktree:true,tag:'v0.6.1',outFile:path.join(temp,'antigravity.zip')});
- assert.equal(pack.listZipEntries(native.outFile).filter(e=>!e.endsWith('/')).length,17);
+ const nativeEntries=pack.listZipEntries(native.outFile);
+ assert.equal(nativeEntries.filter(e=>!e.endsWith('/')).length,17);
+ for(const file of updaterFiles)assert(nativeEntries.some(e=>e.endsWith('/'+file)),'AGY ZIP must retain '+file);
 });
 } finally {
  if(path.dirname(temp)!==path.resolve(os.tmpdir())||!path.basename(temp).startsWith('pfo-codex-tests-'))throw new Error('Invalid cleanup target');

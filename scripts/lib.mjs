@@ -645,7 +645,8 @@ export function normalizeIncomingPayload(raw, harness = HARNESS) {
       raw.tool_input && typeof raw.tool_input === 'object' ? { ...raw.tool_input } : {};
   }
 
-  const subId = raw.agent_id || raw.parent_tool_use_id || (raw.is_subagent ? 'sub' : '');
+  // Codex uses parent_tool_use_id to correlate tool calls, not to identify workers.
+  const subId = raw.agent_id || (harness === 'claude' ? raw.parent_tool_use_id : '') || (raw.is_subagent ? 'sub' : '');
   if (!raw.conversationId) {
     raw.conversationId = subId
       ? `${raw.session_id || 'unknown'}:sub:${subId}`

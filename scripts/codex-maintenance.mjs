@@ -7,12 +7,13 @@ import crypto from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import {runtimeEntries,readProjectFile,ROOT_DIR} from './runtime-files.mjs';
 import {inspectNative} from './codex-app-server.mjs';
-import {registerMarketplace,unregisterMarketplace,diagnose,verifyWorker as standaloneVerify} from './codex-setup.mjs';
+import {registerMarketplace,unregisterMarketplace,diagnose,verifyWorker as standaloneVerify,MARKETPLACE_URL,MARKETPLACE_REF} from './codex-setup.mjs';
 import {codexHome,dataDir,readJson,writeJson,workerConfig,providerIdentity,verificationStatus,nativeManifest,marketplace,redact} from './codex-runtime.mjs';
 export const CONTROL_DIR=path.join(codexHome(),'plugin-data','pro-flash-orchestrator');
 export const MARKETPLACE_DIR=path.join(codexHome(),'local-marketplaces','pro-flash-orchestrator');
 export function codexRuntimeFiles(source={worktree:true}) {
-  const base=runtimeEntries({...source,platform:'antigravity'}).filter(e=>!['plugin.json','hooks.json','rules/AGENTS.md','skills/flash-dev/SKILL.md','README.md','scripts/session-start.mjs'].includes(e.to));
+  const base=runtimeEntries({...source,platform:'antigravity'}).filter(e=>!['plugin.json','hooks.json','rules/AGENTS.md','skills/flash-dev/SKILL.md','README.md','scripts/session-start.mjs',
+    'scripts/update.mjs','scripts/check-update-worker.mjs'].includes(e.to));
   const files=base.map(e=>({to:e.to,content:readProjectFile(e.from,source)}));
   for(const name of ['codex-hook.mjs','codex-runtime.mjs','codex-app-server.mjs','codex-setup.mjs']) files.push({to:'scripts/'+name,content:readProjectFile('scripts/'+name,source)});
   for(const [from,to] of [['adapters/codex/hooks.json','hooks/hooks.json'],
@@ -46,7 +47,13 @@ function validateTarget(target) {
   if(fs.existsSync(dir)&&fs.readdirSync(dir).length&&!fs.existsSync(marker))throw new Error('Target is not a managed PFO marketplace');
   return dir;
 }
-export async function installCodex({target=MARKETPLACE_DIR,dryRun=false,register=true}={}) {
+export async function installCodex({target=MARKETPLACE_DIR,dryRun=false,register=true,source=process.env.PRO_CODEX_MARKETPLACE_SOURCE || 'git'}={}) {
+  if(!['git','local'].includes(source))throw new Error('Marketplace source must be git or local');
+  // Git registration owns its deployment transaction; never overwrite the old local install first.
+  if(register && source==='git') {
+    if(dryRun)return {platform:'codex',source,repository:MARKETPLACE_URL,ref:MARKETPLACE_REF,dryRun:true,registered:false};
+    return {platform:'codex',...await registerMarketplace(ROOT_DIR,{source}),dryRun:false};
+  }
   const dir=validateTarget(target);const files=codexMarketplaceFiles();const marker=readJson(path.join(dir,'.pfo-marketplace.json'));let changed=0;
   const previousOwned=marker?.files || (marker ? ['plugins/pro-flash-orchestrator/scripts/report.mjs'] : []);
   const wanted=new Set(files.map(f=>f.to));
@@ -73,7 +80,7 @@ export async function installCodex({target=MARKETPLACE_DIR,dryRun=false,register
     if(!fs.existsSync(path.join(CONTROL_DIR,'config.json')))writeJson(path.join(CONTROL_DIR,'config.json'),{workerModel:'gpt-5-mini',workerReasoningEffort:'low'});
     if(!fs.existsSync(path.join(CONTROL_DIR,'mode.json')))writeJson(path.join(CONTROL_DIR,'mode.json'),{mode:'enforce'});
     if(register) {
-      await registerMarketplace(dir);
+      await registerMarketplace(dir,{source:'local'});
     }
     writeJson(path.join(CONTROL_DIR,'deployment.json'),{...readJson(path.join(CONTROL_DIR,'deployment.json'),{}),target:dir,registered:register,updatedAt:new Date().toISOString()});
   }
