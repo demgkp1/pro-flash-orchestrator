@@ -1,0 +1,20 @@
+{
+  "name": "pro-flash-local",
+  "interface": {
+    "displayName": "Pro-Flash Orchestrator"
+  },
+  "plugins": [
+    {
+      "name": "pro-flash-orchestrator",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pro-flash-orchestrator"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

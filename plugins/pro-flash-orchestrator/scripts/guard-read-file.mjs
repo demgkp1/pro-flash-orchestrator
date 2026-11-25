@@ -1,0 +1,301 @@
+#!/usr/bin/env node
+/**
+ * PreToolUse guard for  read_file / view_file / view_content_chunk  (v0.3).
+ *
+ * Economics that drive the thresholds:
+ *   one extra model round-trip re-sends the whole conversation, while a
+ *   150-line read is only ~2K tokens. So we never `deny` a small read; we
+ *   `overwrite` it into a slice (zero extra round-trip) and only `deny` when
+ *   the file is big enough that delegation clearly pays off.
+ *
+ * Policy (main agent only — sub-agents are exempt, or flash could never
+ * read the PRD it was dispatched to read):
+ *   code, no slice, > 300 lines / 12 KB  -> slice [1, 150]
+ *   code, no slice, > 800 lines / 40 KB  -> deny, delegate to flash
+ *   doc,  no slice, > 400 lines / 30 KB  -> deny, extract outline / delegate
+ *   any slice with span > 150            -> clamp EndLine to start + 149
+ */
+import path from 'node:path';
+import {
+  ALLOW,
+  basenameOf,
+  currentMode,
+  fileInfo,
+  getArgs,
+  isExemptPath,
+  isNativeOrchestrator,
+  isSubAgent,
+  lastUserInput,
+  logDecision,
+  mentions,
+  output,
+  pickPath,
+  readPayload,
+  readCapabilities,
+  resolvePath,
+  setContext,
+  targetWorkerModel,
+  toolName,
+  updateSession,
+} from './lib.mjs';
+
+const READ_TOOLS = new Set(['read_file', 'view_file', 'view_content_chunk']);
+const SLICE_CAPABLE = new Set(['read_file', 'view_file', 'view_content_chunk']);
+
+const MAX_SPAN = 150;
+const CODE_SOFT_LINES = 300;
+const CODE_SOFT_BYTES = 12 * 1024;
+const CODE_HARD_LINES = 800;
+const CODE_HARD_BYTES = 40 * 1024;
+const DOC_HARD_LINES = 400;
+const DOC_HARD_BYTES = 30 * 1024;
+const DATA_HARD_LINES = 400;
+const DATA_HARD_BYTES = 30 * 1024;
+const HARD_MAX_BYTES = 5 * 1024 * 1024;
+
+const CODE_EXT = new Set([
+  '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.py', '.java', '.kt', '.kts', '.go',
+  '.rs', '.c', '.cc', '.cpp', '.h', '.hpp', '.cs', '.rb', '.php', '.swift', '.scala', '.sh', '.ps1', '.bat',
+  '.sql', '.html', '.htm', '.css', '.scss', '.sass', '.less', '.json', '.yaml', '.yml', '.toml', '.ini',
+  '.xml', '.gradle', '.lua', '.dart', '.ex', '.exs', '.r', '.jl', '.m', '.mm', '.sol', '.proto',
+]);
+const DOC_EXT = new Set(['.md', '.markdown', '.mdx', '.txt', '.rst', '.adoc', '.pdf', '.doc', '.docx', '.odt', '.rtf', '.tex']);
+const DATA_EXT = new Set(['.log', '.csv', '.tsv', '.jsonl', '.ndjson', '.out']);
+
+function pickNumber(args, keys) {
+  for (const key of keys) {
+    const raw = args[key];
+    if (raw === undefined || raw === null || raw === '') continue;
+    const n = Number(raw);
+    if (Number.isSafeInteger(n) && n >= 1) return n;
+  }
+  return null;
+}
+
+function decide() {
+  const payload = readPayload();
+  setContext(payload);
+  const mode = currentMode();
+  if (mode === 'off') return ALLOW;
+
+  const tool = toolName(payload);
+  if (!READ_TOOLS.has(tool)) return ALLOW;
+
+  const args = getArgs(payload);
+  const rawPath = pickPath(args);
+  if (!rawPath) return ALLOW;
+
+  const file = resolvePath(rawPath, payload);
+  if (!file) return ALLOW;
+
+  const sub = isSubAgent(payload);
+  const native = isNativeOrchestrator(payload);
+  const { strategy } = readCapabilities(payload);
+  const baseReads = strategy === 'flash-main-relaxed' ? 6 : 3;
+  const researcher = targetWorkerModel(undefined, 'research', payload);
+  const info = fileInfo(file);
+  const base = basenameOf(file);
+  const ext = path.extname(file).toLowerCase();
+
+  const start = pickNumber(args, ['StartLine', 'startLine', 'Start', 'BeginLine']);
+  const end = pickNumber(args, ['EndLine', 'endLine', 'End']);
+  const hasSlice = start !== null || end !== null;
+
+  const record = {
+    hook: 'guard-read-file',
+    tool,
+    mode,
+    sub,
+    native,
+    base,
+    path: file.length > 180 ? `…${file.slice(-179)}` : file,
+    bytes: info.bytes || 0,
+    lines: info.exists ? info.lines : 0,
+    start,
+    end,
+  };
+
+  /**
+   * @param {{deny?: boolean, reason?: string, overwrite?: object}} result
+   */
+  const finish = ({ deny = false, reason = '', overwrite = null } = {}) => {
+    const action = deny
+      ? mode === 'enforce' ? 'deny' : 'would-deny'
+      : overwrite
+        ? mode === 'enforce' ? 'slice' : 'would-slice'
+        : 'pass';
+    const requestedLines = Math.max(0,
+      Math.min(end ?? info.lines ?? 0, info.lines || 0) - (start ?? 1) + 1);
+    const deliveredLines = deny ? 0 : overwrite ? Math.min(requestedLines,
+      Math.max(0, (overwrite.EndLine ?? end ?? info.lines ?? 0) - (overwrite.StartLine ?? start ?? 1) + 1)) : requestedLines;
+    logDecision({ ...record, action, ...(deny || overwrite ? { requestedLines, deliveredLines, ...(reason ? { reason } : {}) } : {}) });
+    if (mode === 'shadow') return ALLOW;
+    if (deny) return { decision: 'deny', reason };
+    if (overwrite) return { decision: 'allow', overwrite };
+    return ALLOW;
+  };
+
+  /* sub-agents and exempt paths are never policed ----------------------- */
+  if (sub || !info.exists || isExemptPath(file, payload)) return finish();
+  if (mentions(payload, '[ALLOW-READ]') || (base.length >= 5 && mentions(payload, base))) return finish();
+
+  /* binary / absurd size ------------------------------------------------ */
+  if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {
+    return finish({
+      deny: true,
+      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 ${researcher} 抽样，或明确传入 StartLine/EndLine。`,
+    });
+  }
+
+  /* explicit slice: check minified flood and unsliceable tools ---------- */
+  if (hasSlice) {
+    // Guard against single-line / minified flood: if average line length > 4KB
+    // and total file exceeds 40KB, line-based slicing cannot bound token volume.
+    if ((info.bytes || 0) > CODE_HARD_BYTES && (info.avgLineBytes || 0) > 4096) {
+      return finish({
+        deny: true,
+        reason: `【读取守门】该文件体积 ${Math.round((info.bytes || 0) / 1024)} KB 但平均单行高达 ${Math.round((info.avgLineBytes || 0) / 1024)} KB（疑似单行压缩/Minified 数据），按行切片仍会导致上下文泄洪。请派 invoke_subagent(TypeName="research", Model="${researcher}") 检索或用 grep_search 定位。`,
+      });
+    }
+    const from = start ?? 1;
+    const to = end ?? from + MAX_SPAN - 1;
+    if (to < from) {
+      return finish({ deny: true, reason: '【读取守门】EndLine 必须大于或等于 StartLine。' });
+    }
+    if (to - from + 1 > MAX_SPAN && !SLICE_CAPABLE.has(tool)) {
+      return finish({
+        deny: true,
+        reason: `【读取守门】切片跨度 ${to - from + 1} 行，超过单次 ${MAX_SPAN} 行上限，请缩小区间。`,
+      });
+    }
+  } else {
+    /* unsliced read of a code file -------------------------------------- */
+    if (CODE_EXT.has(ext)) {
+      if ((info.bytes || 0) > CODE_HARD_BYTES || info.lines > CODE_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】代码文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB）。请派 invoke_subagent(TypeName="research", Model="${researcher}") 定位，或用 view_file 传 StartLine/EndLine 一次读 ≤${MAX_SPAN} 行。`,
+        });
+      }
+    }
+
+    /* unsliced read of a document --------------------------------------- */
+    if (DOC_EXT.has(ext)) {
+      if ((info.bytes || 0) > DOC_HARD_BYTES || info.lines > DOC_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】文档 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="${researcher}") 提取结构化摘要；若只需目录或某一节，用 grep_search 或 view_file 切片（≤${MAX_SPAN} 行）。`,
+        });
+      }
+    }
+
+    /* unsliced read of a data / log file -------------------------------- */
+    if (DATA_EXT.has(ext)) {
+      if ((info.bytes || 0) > DATA_HARD_BYTES || info.lines > DATA_HARD_LINES) {
+        const lineDesc = info.truncated ? `超过 ${info.lines}` : `${info.lines}`;
+        return finish({
+          deny: true,
+          reason: `【读取守门】数据/日志文件 ${lineDesc} 行（约 ${Math.round((info.bytes || 0) / 1024)} KB），禁止主模型通读。请先派 invoke_subagent(TypeName="research", Model="${researcher}") 检索提取，或用 view_file / read_file 切片（≤${MAX_SPAN} 行）。`,
+        });
+      }
+    }
+  }
+
+  /* multi-file continuous read quota check (single session transaction) - */
+  const trackedExtension = CODE_EXT.has(ext) || DOC_EXT.has(ext) || DATA_EXT.has(ext);
+  const exactAuditSlice = start !== null && end !== null && end >= start && end - start + 1 <= 80;
+  if (!native && (trackedExtension || exactAuditSlice)) {
+    const convId = String(payload.conversationId || 'unknown');
+    const uInput = lastUserInput(payload).trim();
+    const normFile = process.platform === 'win32' ? path.normalize(file).toLowerCase() : path.normalize(file);
+    let shouldDenyQuota = false;
+    let currentReads = [];
+    let quotaLimit = baseReads;
+    let auditSlice = false;
+
+    const updated = updateSession(convId, (state) => {
+      if (state.strategy !== strategy) {
+        state.maxReadsAllowed = state.phase === 'audit'
+          ? Math.max(baseReads, state.maxReadsAllowed || baseReads) : baseReads;
+      }
+      state.strategy = strategy;
+      if (uInput && uInput !== state.lastReadUserInput) {
+        // A first read after dispatch still belongs to that dispatch's turn.
+        const isAuditRead = state.phase === 'audit' && Number(state.auditSliceQuota) > 0;
+        if (!isAuditRead && state.lastSpawnUserInput !== uInput && state.lastUserInput !== uInput) {
+          state.phase = 'explore';
+          state.auditSliceQuota = 0;
+          state.auditPendingWakeup = false;
+          state.maxReadsAllowed = baseReads;
+        }
+        state.lastReadUserInput = uInput;
+        state.readsSinceDispatch = [];
+      }
+      const remaining = Math.min(10, Math.max(0, Number(state.auditSliceQuota) || 0));
+      if ((state.phase === 'audit' || remaining > 0) && remaining > 0 && exactAuditSlice) {
+        state.auditSliceQuota = remaining - 1;
+        auditSlice = true;
+        return state;
+      }
+      if (!trackedExtension) return state;
+      const readList = Array.isArray(state.readsSinceDispatch) ? state.readsSinceDispatch : [];
+      currentReads = readList;
+      const maxLimit = Math.max(baseReads, state.maxReadsAllowed || baseReads);
+      quotaLimit = maxLimit;
+      if (!readList.includes(normFile)) {
+        if (readList.length >= maxLimit) {
+          shouldDenyQuota = true;
+          return state;
+        }
+        readList.push(normFile);
+        state.readsSinceDispatch = readList;
+      }
+      return state;
+    });
+
+    if (!updated) return finish({ deny: true, reason: '【状态锁忙】读取配额暂时无法安全更新，请稍后重试本次工具调用。' });
+
+    if (auditSlice) return finish();
+
+    if (shouldDenyQuota) {
+      return finish({
+        deny: true,
+        reason:
+          `【读取守门：多文件连续盲读拦截】自上次派单以来你已直接读取 ${quotaLimit} 个不同文件（` +
+          currentReads.map((p) => path.basename(p)).join(', ') +
+          `），禁止主模型通过切片逐个连读多文件。请立即派 invoke_subagent(TypeName="research", Model="${researcher}") 批量检索并提取结构化摘要，或用 send_message 续派现有子代理（若确需主控直读可在输入中加 [ALLOW-READ]）。`,
+      });
+    }
+  }
+
+  /* explicit slice: clamp the span -------------------------------------- */
+  if (hasSlice) {
+    const from = start ?? 1;
+    const to = end ?? from + MAX_SPAN - 1;
+    if (to - from + 1 <= MAX_SPAN) {
+      // StartLine without EndLine reads to EOF, so pin the implicit end.
+      return end === null ? finish({ overwrite: { EndLine: to } }) : finish();
+    }
+    return finish({ overwrite: { StartLine: from, EndLine: from + MAX_SPAN - 1 } });
+  }
+
+  /* unsliced read of a code file (soft slice) --------------------------- */
+  if (CODE_EXT.has(ext)) {
+    if ((info.bytes || 0) > CODE_SOFT_BYTES || info.lines > CODE_SOFT_LINES) {
+      return finish({ overwrite: { StartLine: 1, EndLine: MAX_SPAN } });
+    }
+    return finish();
+  }
+
+  return finish();
+}
+
+try {
+  output(decide());
+} catch (error) {
+  output(process.env.PRO_HARNESS === 'codex' && currentMode() === 'enforce'
+    ? { decision: 'deny', reason: 'Codex guard failed safely: ' + String(error.message || error).slice(0,160) }
+    : ALLOW);
+}

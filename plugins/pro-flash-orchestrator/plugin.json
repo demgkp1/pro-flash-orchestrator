@@ -1,0 +1,13 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "pro-flash-orchestrator",
+  "version": "0.7.4",
+  "description": "Native Codex model orchestration and lifecycle guards.",
+  "license": "MIT",
+  "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
+  "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",
+  "keywords": [
+    "codex",
+    "orchestration"
+  ]
+}

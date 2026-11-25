@@ -1,0 +1,85 @@
+{
+  "description": "Pro-Flash Orchestrator native Codex guards.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy",
+            "additionalContextLimit": 1500
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy"
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy",
+            "additionalContextLimit": 1500
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy"
+          }
+        ]
+      }
+    ],
+    "PostModelRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "commandWindows": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.PLUGIN_ROOT,'scripts/codex-hook.mjs')).href)\"",
+            "timeout": 20,
+            "statusMessage": "Pro-Flash policy"
+          }
+        ]
+      }
+    ]
+  }
+}

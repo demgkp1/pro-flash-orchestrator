@@ -1,0 +1,12 @@
+{
+  "name": "pro-flash-orchestrator",
+  "version": "0.7.4",
+  "description": "Native Codex orchestration guards",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "onboardingSkill": "./skills/pfo-setup/SKILL.md",
+  "interface": {
+    "displayName": "Pro-Flash Orchestrator for Codex",
+    "shortDescription": "Verified workers and native guards"
+  }
+}
