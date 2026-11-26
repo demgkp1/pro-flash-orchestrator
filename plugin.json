@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
   "displayName": "pro-flash-orchestrator",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "license": "MIT",
-  "description": "v0.7.4 Pro 主控与轻量助手分流：新增 Codex Git marketplace 正式版本发布、事务式安装迁移与升级兼容桥；修复 Codex 父工具关联误判子代理身份，补充 AGY 后台版本检测脱敏失败诊断；保留纯只读双轨验收契约、Gemini 4 动态路由、免 Git 一键升级与同批源码互斥锁。",
+  "description": "v0.7.5 Pro 主控与轻量助手分流：修复 Antigravity 2.35.2 下 Gemini 4 Neon 主会话使用 \"flash\" 别名导致子代理派发失败的问题，默认路由至 \"inherit\"；完整保留 v0.7.4 Codex Git marketplace 正式版本发布、事务式安装迁移与升级兼容桥、纯只读双轨验收契约、Gemini 4 动态路由、免 Git 一键升级与同批源码互斥锁。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",

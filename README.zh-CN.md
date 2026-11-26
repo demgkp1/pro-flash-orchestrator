@@ -5,7 +5,7 @@
 面向通用软件工程、代码审查、Bug 排查、重构与文档研读。通过确定性的物理 Hook 守门，让旗舰主模型（Pro）聚焦核心架构决策与标杆实现，并将多文件探路、外围扩写与单元测试分流给轻量助手（Flash / Hydrogen）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.4-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.5-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#多平台支持与验收状态)
 [![Tests](https://img.shields.io/badge/Doctor-117%2F117%20Passed-green.svg)](#诊断与测试)
 
@@ -59,6 +59,13 @@
 
 ---
 
+## v0.7.5 最新特性
+
+- **修复 Antigravity 2.35.2 下 `Gemini 4 Neon` 子代理派发失败**：针对 Antigravity 2.35.2 中 `Gemini 4 Neon` 主会话使用 `"flash"` 别名导致子代理派发失败的问题，改为默认路由至 `"inherit"`。
+- **完整继承 v0.7.4 全部特性**：保留 Codex 稳定 Git Marketplace 与事务迁移、方案 A 纯只读 `research` 双轨验收契约、独立 `currentBatchResearchSpawns` 与 `[MULTI-RESEARCH]` 追踪、动态 `PLUGIN_VERSION`、Codex 双轨同步、死循环熔断、Audit 动态切片配额与免 Git 一键升级（`update.mjs`）。详见中英双语[发布说明](docs/releases/v0.7.5.md)。
+
+---
+
 ## v0.7.4 最新特性
 
 - **Codex 稳定 Git Marketplace**：正式稳定 GitHub Release 成功后，将对应的完整 Codex 包发布至 `codex-marketplace` ref，并校验归档内容、清单版本与发布标签一致。
@@ -102,10 +109,10 @@
 
 ## 快速安装与免 Git 升级
 
-v0.7.4 发布包：
+v0.7.5 发布包：
 
-- [pro-flash-orchestrator-antigravity-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-antigravity-v0.7.4.zip)（根目录为 `pro-flash-orchestrator/`）
-- [pro-flash-orchestrator-codex-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-codex-v0.7.4.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-antigravity-v0.7.5.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.5/pro-flash-orchestrator-antigravity-v0.7.5.zip)（根目录为 `pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-codex-v0.7.5.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.5/pro-flash-orchestrator-codex-v0.7.5.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
 
 ### 方式一：Release 用户免 Git 在线 / 离线升级
 
@@ -114,7 +121,7 @@ v0.7.4 发布包：
 node "<插件安装目录>/scripts/update.mjs"
 
 # 使用本地已下载的 ZIP 包离线升级
-node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.4.zip"
+node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.5.zip"
 
 # 预览变更但不写入磁盘
 node "<插件安装目录>/scripts/update.mjs" --dry-run
@@ -175,7 +182,7 @@ node scripts/install.mjs
 | 平台 | 当前状态 | 说明 |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **主力完整支持** | 生产级生命周期 Hook 守门、AGY `v1.5.11+` 档位路由、Audit 动态切片配额与免 Git `update.mjs`。 |
-| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.4.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
+| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.5.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
 | **Claude Code** | **仅提供配置模板** | 提供 `hooks/claude-settings-hooks.json` 钩子适配模板，尚未进行实机真实验证。 |
 
 ### Codex 独立 Marketplace 安装
@@ -186,7 +193,7 @@ node scripts/install.mjs
 node scripts/install.mjs --platform codex --git
 ```
 
-需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.7.4.zip` 并进入 Marketplace 根目录：
+需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.7.5.zip` 并进入 Marketplace 根目录：
 
 ```bash
 node install.mjs --local
@@ -255,7 +262,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL 模板、审计记录与 Codex 验收证据
 ├── hooks/                         # Claude Code 与 Codex CLI 钩子适配配置
 ├── hooks.json                     # Antigravity 生命周期钩子路由
-├── plugin.json                    # Antigravity 插件清单 (v0.7.4)
+├── plugin.json                    # Antigravity 插件清单 (v0.7.5)
 ├── rules/AGENTS.md                # 常驻架构师与助手规范（根目录 AGENTS.md 为其镜像）
 ├── runtime-files.json             # 运行时分发白名单
 ├── skills/flash-dev/SKILL.md      # /flash-dev 工作流技能（根目录 SKILL.md 为其镜像）

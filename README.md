@@ -5,7 +5,7 @@ A lifecycle-hook orchestration engine for Google Antigravity, with an independen
 Designed for universal software engineering, code review, bug diagnosis, refactoring, and document exploration. It keeps the flagship model (Pro) focused on architectural decisions and benchmark implementations while offloading exploration, peripheral expansion, and tests to a lightweight worker (Flash / Hydrogen) via deterministic physical hooks.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.4-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.7.5-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#multi-platform-support--acceptance-status)
 [![Tests](https://img.shields.io/badge/Doctor-117%2F117%20Passed-green.svg)](#diagnostics--tests)
 
@@ -59,6 +59,13 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ---
 
+## What's New in v0.7.5
+
+- **Antigravity 2.35.2 `Gemini 4 Neon` Subagent Routing Fix**: Fixes subagent dispatch failures under Antigravity 2.35.2 where `Gemini 4 Neon` main sessions used the `"flash"` alias; `Gemini 4 Neon` main sessions now route subagent dispatches to `"inherit"` by default.
+- **Preserves All v0.7.4 Capabilities**: Retains the stable Codex Git marketplace release, transactional migration, Option A strictly read-only `research` dual-track contracts, `currentBatchResearchSpawns` & `[MULTI-RESEARCH]` tracking, dynamic `PLUGIN_VERSION`, Codex dual-track sync, thrashing circuit breaker, Audit slice quota, and git-free upgrades (`update.mjs`). See the bilingual [release notes](docs/releases/v0.7.5.md).
+
+---
+
 ## What's New in v0.7.4
 
 - **Stable Codex Git Marketplace**: After a stable GitHub Release succeeds, its complete Codex package is published to the `codex-marketplace` ref, with archive contents and manifest versions checked against the release tag.
@@ -102,10 +109,10 @@ Relying solely on a flagship model in long-running sessions causes two bottlenec
 
 ## Quick Install & Git-free Upgrade
 
-v0.7.4 release assets:
+v0.7.5 release assets:
 
-- [pro-flash-orchestrator-antigravity-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-antigravity-v0.7.4.zip) (rooted at `pro-flash-orchestrator/`)
-- [pro-flash-orchestrator-codex-v0.7.4.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.4/pro-flash-orchestrator-codex-v0.7.4.zip) (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
+- [pro-flash-orchestrator-antigravity-v0.7.5.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.5/pro-flash-orchestrator-antigravity-v0.7.5.zip) (rooted at `pro-flash-orchestrator/`)
+- [pro-flash-orchestrator-codex-v0.7.5.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.5/pro-flash-orchestrator-codex-v0.7.5.zip) (rooted at `pro-flash-orchestrator-codex/`, containing `plugins/pro-flash-orchestrator/`)
 
 ### Option 1: Git-free Online / Offline Upgrade (Release Users)
 
@@ -114,7 +121,7 @@ v0.7.4 release assets:
 node "<install-directory>/scripts/update.mjs"
 
 # Offline upgrade from a local ZIP archive
-node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.4.zip"
+node "<install-directory>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.5.zip"
 
 # Preview changes without writing
 node "<install-directory>/scripts/update.mjs" --dry-run
@@ -175,7 +182,7 @@ Set mode in `.state/mode.json` (`{ "mode": "enforce" | "shadow" | "off" }`, prot
 | Platform | Status | Notes |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **Primary (Full Support)** | Production-verified lifecycle hooks, AGY `v1.5.11+` tier routing, Audit slice budget, and Git-free `update.mjs`. |
-| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.4.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
+| **OpenAI Codex CLI** | **Staged Native Acceptance** | Independently packaged (`pro-flash-orchestrator-codex-v0.7.5.zip`). Six user-native hooks have been reviewed as trusted and desktop `PreToolUse` observed, but full native guard coverage and end-to-end native worker dispatch remain pending. **Not claimed as fully live-usable.** See [Codex acceptance evidence](docs/codex-acceptance-v0.5.2.md). |
 | **Claude Code** | **Template Only** | Hook template provided in `hooks/claude-settings-hooks.json`; not live-validated. |
 
 ### Codex Standalone Setup
@@ -186,7 +193,7 @@ Once the first stable marketplace publication is available, install or migrate f
 node scripts/install.mjs --platform codex --git
 ```
 
-For an explicit local fallback, extract `pro-flash-orchestrator-codex-v0.7.4.zip`, enter its marketplace root, and run:
+For an explicit local fallback, extract `pro-flash-orchestrator-codex-v0.7.5.zip`, enter its marketplace root, and run:
 
 ```bash
 node install.mjs --local
@@ -255,7 +262,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL template, audits & Codex acceptance evidence
 ├── hooks/                         # Claude Code & Codex CLI hook configurations
 ├── hooks.json                     # Antigravity lifecycle hook routing
-├── plugin.json                    # Antigravity plugin manifest (v0.7.4)
+├── plugin.json                    # Antigravity plugin manifest (v0.7.5)
 ├── rules/AGENTS.md                # Persistent architect & worker rules (mirrored at root AGENTS.md)
 ├── runtime-files.json             # Runtime distribution allowlist
 ├── skills/flash-dev/SKILL.md      # /flash-dev workflow skill (mirrored at root SKILL.md)

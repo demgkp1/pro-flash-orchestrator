@@ -158,7 +158,7 @@ await test('parseAvailableModels and CLI probe parse Gemini 4 Neon tiers and set
     assert(result.availableModels.includes(id), id);
   }
 });
-await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-worker and flash target',()=>{
+await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-worker and inherit target',()=>{
   for (const modelFields of [{modelName:'Gemini 4 Neon (High)'}, {modelName:'', model:'Gemini 4 Neon (High)'}]) {
     const payload = base('neon-main', modelFields);
     const caps = lib.readCapabilities(payload);
@@ -168,8 +168,8 @@ await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-work
     assert.equal(caps.strategy, 'hydrogen-worker');
     assert.notEqual(caps.strategy, 'flash-main-relaxed');
     assert.notEqual(caps.strategy, 'hydrogen-main');
-    assert.equal(lib.targetWorkerModel('antigravity', 'self', payload), 'flash');
-    assert.equal(lib.targetWorkerModel('antigravity', 'research', payload), 'flash');
+    assert.equal(lib.targetWorkerModel('antigravity', 'self', payload), 'inherit');
+    assert.equal(lib.targetWorkerModel('antigravity', 'research', payload), 'inherit');
   }
   assert.equal(calls.length, 0);
 });
@@ -236,6 +236,19 @@ await test('ordinary AGY dispatches satisfy the host Model enum and Hydrogen inh
       const effective={...args,...out.overwrite};
       assert(allowed.has(effective.Model),modelName+': '+effective.Model);
       assert.equal(effective.Model,/hydrogen/i.test(modelName)?'inherit':'flash');
+      assert(effective.Prompt.includes('[PRO-CONTRACT]'));
+    }
+  }
+});
+await test('guard-subagent rewrites Model="flash" to Model="inherit" under Gemini 4 Neon main session',()=>{
+  cache();
+  for(const modelFields of [{modelName:'Gemini 4 Neon (High)'},{modelName:'',model:'Gemini 4 Neon (Medium)'}]) {
+    for(const type of ['research','self']) {
+      const args={TypeName:type,Model:'flash',Prompt:'bounded task'};
+      const out=hook('guard-subagent.mjs',base('neon-rewrite-'+type,{...modelFields,toolCall:{name:'invoke_subagent',args}}));
+      assert.equal(decision(out),'allow');
+      const effective={...args,...out.overwrite};
+      assert.equal(effective.Model,'inherit');
       assert(effective.Prompt.includes('[PRO-CONTRACT]'));
     }
   }

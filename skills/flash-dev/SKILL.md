@@ -1,12 +1,12 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.7.4「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.7.5「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.7.4)：主控标杆 + Flash 执行工作流
+# `/flash-dev` (v0.7.5)：主控标杆 + Flash 执行工作流
 
-> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.4 支持免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测）与子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。 本版新增 Codex Git marketplace 正式版本发布与 AGY 后台版本检测的脱敏失败诊断。
+> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：Hydrogen 主会话使用 `Model="inherit"`，其他主会话默认使用 `Model="flash"`。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.5 修复 Antigravity 2.35.2 下 `Gemini 4 Neon` 默认路由至 `inherit`，支持免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测与脱敏失败诊断）、Codex Git marketplace 正式版本发布以及子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
 
 ## 1. 三明治协同四步法
 
