@@ -47,6 +47,7 @@ jobs:
           node scripts/test-check-update-worker.mjs
           node scripts/test-contract-dual-track.mjs
           node scripts/test-codex-marketplace.mjs
+          node --test scripts/test-panel-settings.mjs scripts/test-panel-api.mjs
 
       - name: Package platform release archives
         env:

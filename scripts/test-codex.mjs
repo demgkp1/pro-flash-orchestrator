@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-/** Offline Codex protocol/package tests. Use --role-and-package for focused role/package regressions. */
+/** Offline Codex protocol/package tests. */
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -14,6 +14,8 @@ const runtime=await import('./codex-runtime.mjs');
 const maintenance=await import('./codex-maintenance.mjs');
 const setup=await import('./codex-setup.mjs');
 const pack=await import('./package.mjs');
+const {runtimeEntries}=await import('./runtime-files.mjs');
+const {validateMarketplaceFiles}=await import('./publish-codex-marketplace.mjs');
 const live=await import('./test-codex-live.mjs');
 const control=path.join(process.env.CODEX_HOME,'plugin-data','pro-flash-orchestrator');
 const verificationFile=path.join(process.env.PRO_STATE_DIR,'worker-verification.json');
@@ -48,17 +50,8 @@ const patch=files=>'*** Begin Patch\n'+files.map(f=>'*** Update File: '+f+'\n@@\
 const addPatch=file=>'*** Begin Patch\n*** Add File: '+file+'\n+new\n*** End Patch';
 const deletePatch=file=>'*** Begin Patch\n*** Delete File: '+file+'\n*** End Patch';
 const movePatch=(from,to)=>'*** Begin Patch\n*** Update File: '+from+'\n*** Move to: '+to+'\n@@\n-old\n+new\n*** End Patch';
-const focusedNames=new Set([
-  'native parent tool correlations do not change caller role',
-  'parallel native parent tool correlations share one spawn batch',
-  'worker identity is isolated and nested spawning is blocked',
-  'transcript metadata recognizes actual spawned-worker origin',
-  'Claude parent tool correlation still identifies a worker',
-  'both platform ZIPs use exact independent allowlists',
-]);
-const focused=process.argv.includes('--role-and-package');
 let passed=0;const failures=[];
-async function test(name,fn){if(focused&&!focusedNames.has(name))return;try{await fn();passed++;console.log('PASS '+name);}catch(e){failures.push(name);console.error('FAIL '+name+': '+e.stack);}}
+async function test(name,fn){try{await fn();passed++;console.log('PASS '+name);}catch(e){failures.push(name);console.error('FAIL '+name+': '+e.stack);}}
 try {
 await test('live evidence parser recognizes CLI and app-server collaboration items',()=>{
  const cli={type:'collab_tool_call',tool:'spawn_agent',model:'gpt-6-luna',reasoning_effort:'low',prompt:'[PRO-CONTRACT] bounded work',status:'completed'};
@@ -360,6 +353,8 @@ await test('native deployment preserves controls and uses the marketplace source
  assert(fs.readFileSync(path.join(control,'config.json')).equals(before));
  assert(fs.existsSync(path.join(target,'.agents/plugins/marketplace.json')));
  const manifest=runtime.readJson(path.join(target,'plugins/pro-flash-orchestrator/plugin.json'));
+ assert.equal(manifest.version,runtime.readJson(path.join(root,'plugin.json')).version);
+ assert(!fs.existsSync(path.join(target,'plugins/pro-flash-orchestrator/sidecars')));
  assert.equal(runtime.readJson(path.join(target,'plugins/pro-flash-orchestrator/.codex-plugin/plugin.json')).hooks,'./hooks/hooks.json');
 });
 await test('native compatibility wiring preserves other hooks and invalidates review on code changes',async()=>{
@@ -399,17 +394,26 @@ await test('native list_agents aliases cannot bypass the main polling guard',()=
 });
 await test('both platform ZIPs use exact independent allowlists',()=>{
  const updaterFiles=['scripts/update.mjs','scripts/check-update-worker.mjs'];
+ const panelFiles=['sidecar.json','main.mjs','index.html','style.css','app.js'].map(name=>'sidecars/panel/'+name);
+ const isSidecar=file=>file.split('/').includes('sidecars');
  const runtimeFiles=maintenance.codexRuntimeFiles().map(e=>e.to);
  for(const file of updaterFiles)assert(!runtimeFiles.includes(file),'Codex runtime must exclude '+file);
- const codex=pack.createReleaseZip({runtime:true,platform:'codex',worktree:true,tag:'v0.6.1',outFile:path.join(temp,'codex.zip')});
- pack.verifyZipLayout(codex.outFile,maintenance.codexMarketplaceFiles().map(e=>e.to),{prefix:'pro-flash-orchestrator-codex/',required:['plugins/pro-flash-orchestrator/plugin.json']});
- const entries=pack.listZipEntries(codex.outFile);
+ assert(!runtimeFiles.some(isSidecar),'Codex runtime must exclude AGY sidecars');
+ const version=runtime.readJson(path.join(root,'plugin.json')).version;
+ const marketplace=maintenance.codexMarketplaceFiles();
+ validateMarketplaceFiles(marketplace,'v'+version);
+ const options={worktree:true,runtime:true,outDir:temp};
+ const codex=pack.createReleaseZip({...options,platform:'codex'});
+ assert.equal(path.basename(codex.outFile),`pro-flash-orchestrator-codex-v${version}.zip`);
+ const entries=pack.verifyZipLayout(codex.outFile,marketplace.map(e=>e.to),{prefix:'pro-flash-orchestrator-codex/',required:['plugins/pro-flash-orchestrator/plugin.json']});
  for(const file of updaterFiles)assert(!entries.some(e=>e.endsWith('/'+file)),'Codex ZIP must exclude '+file);
+ assert(!entries.some(isSidecar),'Codex ZIP must exclude AGY sidecars');
  assert(!entries.some(e=>e.includes('scripts/install.mjs')||e.includes('scripts/test-')||e.includes('scripts/doctor.mjs')||e.includes('scripts/session-start.mjs')));
- const native=pack.createReleaseZip({runtime:true,platform:'antigravity',worktree:true,tag:'v0.6.1',outFile:path.join(temp,'antigravity.zip')});
- const nativeEntries=pack.listZipEntries(native.outFile);
- assert.equal(nativeEntries.filter(e=>!e.endsWith('/')).length,17);
- for(const file of updaterFiles)assert(nativeEntries.some(e=>e.endsWith('/'+file)),'AGY ZIP must retain '+file);
+ const native=pack.createReleaseZip({...options,platform:'antigravity'});
+ assert.equal(path.basename(native.outFile),`pro-flash-orchestrator-antigravity-v${version}.zip`);
+ const nativeEntries=pack.verifyZipLayout(native.outFile,runtimeEntries({platform:'antigravity'}).map(e=>e.to));
+ assert.equal(nativeEntries.filter(e=>!e.endsWith('/')).length,17+panelFiles.length);
+ for(const file of [...updaterFiles,...panelFiles])assert(nativeEntries.includes('pro-flash-orchestrator/'+file),'AGY ZIP must retain '+file);
 });
 } finally {
  if(path.dirname(temp)!==path.resolve(os.tmpdir())||!path.basename(temp).startsWith('pfo-codex-tests-'))throw new Error('Invalid cleanup target');

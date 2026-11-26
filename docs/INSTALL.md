@@ -6,13 +6,15 @@
 
 ### 1. Release 用户免 Git 一键在线升级（推荐）
 
-普通 Release 用户无需维护 Git 仓库或源码，直接在安装目录下执行以下命令，即可一键在线拉取 GitHub Releases 最新精简包覆盖升级（自动保留 `.state/` 目录与用户配置）：
+v0.8.0 起，在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro + Flash · 编排设置** 中选择并保存一项统一的 Worker 档位（**Auto** 恢复默认），也可点击 **获取最新版本** 升级。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。面板未显示时，先启用插件及其 sidecar，再重载 App。
+
+CLI 或旧版 Release 用户无需 Git，仍可运行安装目录中的更新脚本，在线拉取 GitHub Releases 最新精简包升级（保留 `.state/` 目录与用户配置）：
 
 ```powershell
 node "{{INSTALL_DIR}}/scripts/update.mjs"
 ```
 
-- 如网络受限，可先手动下载最新 Release 的 `pro-flash-orchestrator-antigravity-v*.zip`，然后通过本地文件升级：
+- 如网络受限，可先手动下载[官方 Release](https://github.com/demgkp1/pro-flash-orchestrator/releases) 的 `pro-flash-orchestrator-antigravity-v*.zip`，然后通过本地文件升级：
   ```powershell
   node "{{INSTALL_DIR}}/scripts/update.mjs" --zip "path/to/archive.zip"
   ```

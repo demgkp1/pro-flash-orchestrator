@@ -12,9 +12,11 @@ import { createReleaseZip, verifyZipLayout, resolveTag } from './package.mjs';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-install-test-'));
 const target = path.join(TMP, 'pro-flash-orchestrator');
 const stateDir = path.join(target, '.state');
+const panelFiles = ['sidecar.json', 'main.mjs', 'index.html', 'style.css', 'app.js'].map(name => 'sidecars/panel/' + name);
 fs.mkdirSync(stateDir, { recursive: true });
 const stateFiles = new Map([
   ['mode.json', '{"mode":"shadow"}\n'],
+  ['worker-settings.json', '{"model":"flash_lite"}\n'],
   ['decisions.jsonl', '{"custom":"keep this history"}\n'],
   ['capabilities.json', '{"hasHydrogen":true,"source":"keep this local capability cache"}\n'],
   ['sessions/existing.json', '{"writesSinceDispatch":["keep.js"]}\n'],
@@ -40,14 +42,20 @@ try {
   });
   test('dry run validates the layout without creating plugin files', () => {
     const out = installRuntime(target, { dryRun: true });
-    assert.equal(out.files, 17);
+    assert.equal(out.files, 17 + panelFiles.length);
     assert.equal(fs.existsSync(path.join(target, 'plugin.json')), false);
+    assert.equal(fs.existsSync(path.join(target, 'sidecars')), false);
     checkState();
   });
   test('Antigravity install contains only runtime files and keeps user state', () => {
     const out = installRuntime(target);
-    assert.equal(out.files, 17);
-    for (const { to } of runtimeEntries({ platform: 'antigravity' })) assert(fs.existsSync(path.join(target, to)), to);
+    assert.equal(out.files, 17 + panelFiles.length);
+    const agyFiles = runtimeEntries({ platform: 'antigravity' }).map(({ to }) => to);
+    assert.deepEqual(agyFiles.filter(file => file.startsWith('sidecars/')).sort(), [...panelFiles].sort());
+    for (const platform of ['codex', 'claude']) {
+      assert(!runtimeEntries({ platform }).some(({ to }) => to.startsWith('sidecars/')), platform);
+    }
+    for (const file of agyFiles) assert(fs.existsSync(path.join(target, file)), file);
     for (const file of ['.git', '.github', 'runtime-files.json', 'hooks', 'scripts/doctor.mjs',
       'scripts/test-regressions.mjs', 'scripts/package.mjs', 'scripts/install.mjs']) {
       assert.equal(fs.existsSync(path.join(target, file)), false, file);
@@ -63,6 +71,10 @@ try {
     checkState();
   });
   test('all six installed hooks execute with isolated smoke-test state', () => {
+    const smokeState = path.join(TMP, 'smoke-state');
+    fs.mkdirSync(smokeState);
+    // Keep SessionStart offline even if the developer has a real agy installed.
+    fs.writeFileSync(path.join(smokeState, 'capabilities.json'), JSON.stringify({ hasHydrogen: false, detectedAt: Date.now(), cliProbeSucceeded: true }));
     const calls = [
       ['session-start.mjs', null], ['pre-invocation.mjs', null],
       ['guard-subagent.mjs', { name: 'invoke_subagent', args: { TypeName: 'self', Model: 'pro', Prompt: 'task' } }],
@@ -74,7 +86,8 @@ try {
       const payload = { conversationId: 'doctor-runtime-layout', lastUserInput: 'test runtime install', workspacePaths: [TMP], toolCall };
       const out = spawnSync(process.execPath, [path.join(target, 'scripts', script)], {
         input: JSON.stringify(payload), encoding: 'utf8', timeout: 10000,
-        env: { ...process.env, PRO_MODE: 'enforce', PRO_STATE_DIR: path.join(TMP, 'smoke-state'), PRO_TEST: '1', ARGON_TEST: '1' },
+        env: { ...process.env, PRO_MODE: 'enforce', PRO_HARNESS: 'antigravity', PRO_STATE_DIR: smokeState,
+          PRO_SELF_MODEL: '', PRO_WORKER_MODEL: '', PRO_NATIVE_ORCHESTRATOR: '', PRO_TEST: '1', ARGON_TEST: '1' },
       });
       assert.ifError(out.error);
       assert.equal(out.status, 0, out.stderr);
@@ -99,7 +112,7 @@ try {
     checkState();
   });
   test('runtime release excludes all maintenance files and includes cross-platform adapters', () => {
-    const result = createReleaseZip({ tag: 'v0.6.1', worktree: true, runtime: true, outFile: path.join(TMP, 'runtime.zip') });
+    const result = createReleaseZip({ worktree: true, runtime: true, outFile: path.join(TMP, 'runtime.zip') });
     const entries = verifyZipLayout(result.outFile, runtimeEntries().map((file) => file.to));
     assert(entries.includes('pro-flash-orchestrator/hooks/codex-hooks.json'));
     assert(entries.includes('pro-flash-orchestrator/hooks/claude-settings-hooks.json'));
@@ -109,7 +122,7 @@ try {
     checkState();
   });
   test('complete source archives remain available separately', () => {
-    const result = createReleaseZip({ tag: 'v0.6.1', worktree: true, runtime: false, outFile: path.join(TMP, 'source.zip') });
+    const result = createReleaseZip({ worktree: true, runtime: false, outFile: path.join(TMP, 'source.zip') });
     const entries = verifyZipLayout(result.outFile);
     assert(entries.includes('pro-flash-orchestrator/scripts/test-install.mjs'));
     assert(entries.includes('pro-flash-orchestrator/runtime-files.json'));

@@ -12,8 +12,9 @@ import {codexHome,dataDir,readJson,writeJson,workerConfig,providerIdentity,verif
 export const CONTROL_DIR=path.join(codexHome(),'plugin-data','pro-flash-orchestrator');
 export const MARKETPLACE_DIR=path.join(codexHome(),'local-marketplaces','pro-flash-orchestrator');
 export function codexRuntimeFiles(source={worktree:true}) {
-  const base=runtimeEntries({...source,platform:'antigravity'}).filter(e=>!['plugin.json','hooks.json','rules/AGENTS.md','skills/flash-dev/SKILL.md','README.md','scripts/session-start.mjs',
-    'scripts/update.mjs','scripts/check-update-worker.mjs'].includes(e.to));
+  // Start at the Codex boundary, not AGY's. The native hooks below replace the legacy template.
+  const base=runtimeEntries({...source,platform:'codex'}).filter(e=>!['plugin.json','hooks.json','rules/AGENTS.md',
+    'skills/flash-dev/SKILL.md','README.md','scripts/session-start.mjs','hooks/codex-hooks.json'].includes(e.to));
   const files=base.map(e=>({to:e.to,content:readProjectFile(e.from,source)}));
   for(const name of ['codex-hook.mjs','codex-runtime.mjs','codex-app-server.mjs','codex-setup.mjs']) files.push({to:'scripts/'+name,content:readProjectFile('scripts/'+name,source)});
   for(const [from,to] of [['adapters/codex/hooks.json','hooks/hooks.json'],

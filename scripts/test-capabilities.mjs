@@ -176,9 +176,9 @@ await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-work
 await test('Hydrogen ACL uses legal flash by default and enforces INVOCABLE_SUBAGENT_MODELS enum protection',()=>{
   cache();
   assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
-  // Non-enum PRO_HYDROGEN_ID or PRO_SELF_MODEL (including removed flash_lite) falls back to flash on Argon main
+  // Host model IDs are not invoke_subagent tier aliases.
   const hydrogenPayload = base('worker-h', {modelName:'Gemini 4 Hydrogen (Medium)'});
-  for(const nonEnum of ['flash_lite','gemini-4-hydrogen-medium','custom-hydrogen','gemini-4-hydrogen']) {
+  for(const nonEnum of ['auto','gemini-4-hydrogen-medium','custom-hydrogen','gemini-4-hydrogen']) {
     process.env.PRO_HYDROGEN_ID=nonEnum;
     assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
     assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
@@ -190,12 +190,14 @@ await test('Hydrogen ACL uses legal flash by default and enforces INVOCABLE_SUBA
   }
 
   // Legal enum values take effect under antigravity
-  for(const legal of ['flash','pro','inherit']) {
+  const authorized=base('worker',{lastUserInput:'[FORCE-PRO] review'});
+  for(const legal of ['flash_lite','flash','pro','inherit']) {
     process.env.PRO_HYDROGEN_ID=legal;
-    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),legal);
+    assert.equal(lib.targetWorkerModel('antigravity','self',authorized),legal);
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('ordinary')),legal==='pro'?'flash':legal);
     process.env.PRO_HYDROGEN_ID='';
     process.env.PRO_SELF_MODEL=legal;
-    assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),legal);
+    assert.equal(lib.targetWorkerModel('antigravity','self',authorized),legal);
     process.env.PRO_SELF_MODEL='';
   }
 });
@@ -222,7 +224,7 @@ await test('Hydrogen child evidence and other harnesses never receive hydrogen-m
   assert(!fs.existsSync(lib.SESSION_DIR),'capability readers must not persist identity');
 });
 await test('ordinary AGY dispatches satisfy the host Model enum and Hydrogen inherits',()=>{
-  const allowed=new Set(['inherit','flash','pro']);
+  const allowed=new Set(['inherit','flash_lite','flash','pro']);
   cache();
   for(const [index,modelName] of ['Argon','Carbon','Opus','Gemini 3.8 Flash','Gemini 4 Hydrogen'].entries()) {
     for(const type of ['research','self']) {
@@ -248,7 +250,31 @@ await test('guard-subagent rewrites Model="flash_lite" to Model="flash" under Ge
     }
   }
 });
-await test('native Orchestrator preserves its own model routing and only injects the contract',()=>{
+await test('legacy panel settings migrate on read and one saved model leaves each dispatch TypeName intact',()=>{
+  cache();
+  const file=path.join(STATE,'worker-settings.json');
+  for(const [legacy,model] of [
+    [{research:'flash_lite',self:'flash_lite'},'flash_lite'],
+    [{research:'flash_lite',self:'inherit'},'auto'],
+    [{research:'invalid',self:'invalid'},'auto'],
+  ]) {
+    const original=JSON.stringify(legacy,null,2)+'\n';
+    fs.writeFileSync(file,original);
+    assert.deepEqual(lib.readPanelSettings(),{model});
+    assert.equal(fs.readFileSync(file,'utf8'),original,'reading must not rewrite the legacy file');
+  }
+  assert.deepEqual(lib.writePanelSettings({model:'inherit'}),{model:'inherit'});
+  assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),{model:'inherit'});
+  for(const TypeName of ['research','self']) {
+    const args={TypeName,Model:'flash',Prompt:'bounded work'};
+    const out=hook('guard-subagent.mjs',base('shared-panel',{toolCall:{name:'invoke_subagent',args}}));
+    assert.equal(decision(out),'allow');
+    assert.equal(out.overwrite?.Model,'inherit');
+    assert(!Object.hasOwn(out.overwrite,'TypeName'),'the dispatch type belongs to the caller');
+  }
+  assert.equal(probeCount(),0);
+});
+await test('native Orchestrator preserves routing except for explicitly unauthorized pro',()=>{
   cache();
   for(const [index,extra] of [{modelName:'Orchestrator (Argon)'},{modelName:'Argon',model:'ORCHESTRATOR'},
     {modelName:'Argon'}].entries()) {
@@ -257,8 +283,8 @@ await test('native Orchestrator preserves its own model routing and only injects
       const env=index===2?{PRO_NATIVE_ORCHESTRATOR:'1'}:{};
       const out=hook('guard-subagent.mjs',base('native-route-'+index+'-'+modelIndex,{...extra,toolCall:{name:'invoke_subagent',args}}),env);
       assert.equal(decision(out),'allow');
-      assert.deepEqual(Object.keys(out.overwrite),['Prompt']);
-      assert.equal(({...args,...out.overwrite}).Model,Model);
+      assert.deepEqual(Object.keys(out.overwrite).sort(),Model==='pro'?['Model','Prompt']:['Prompt']);
+      assert.equal(({...args,...out.overwrite}).Model,Model==='pro'?'flash':Model);
       assert(out.overwrite.Prompt.includes('[PRO-CONTRACT]'));
       const again=hook('guard-subagent.mjs',base('native-route-'+index+'-'+modelIndex,
         {...extra,toolCall:{name:'invoke_subagent',args:{...args,...out.overwrite}}}),env);
@@ -312,7 +338,8 @@ await test('task and common overrides preserve priority across harnesses',()=>{
   // Legal enum values take effect under antigravity
   process.env.PRO_WORKER_MODEL='inherit';process.env.PRO_RESEARCH_MODEL='pro';process.env.PRO_SELF_MODEL='flash';
   try {
-    assert.equal(lib.targetWorkerModel('antigravity','research'),'pro');
+    assert.equal(lib.targetWorkerModel('antigravity','research',base('ordinary')),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','research',base('authorized',{lastUserInput:'[FORCE-PRO]'})),'pro');
     assert.equal(lib.targetWorkerModel('antigravity','self'),'flash');
     assert.equal(lib.targetWorkerModel('antigravity'),'inherit');
   }
@@ -379,7 +406,10 @@ await test('startup fallback and relaxed cards match effective Worker and limits
 await test('startup honors research and self overrides in injected parameters',()=>{
   cache();
   // Valid enum override takes effect
-  const out=hook('session-start.mjs',base('overrides'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'pro'});
+  const env={PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'pro'};
+  const ordinary=hook('session-start.mjs',base('overrides'),env);
+  assert(!message(ordinary).includes('Model=\\"pro\\"'));
+  const out=hook('session-start.mjs',base('overrides',{lastUserInput:'[FORCE-ARGON] review'}),env);
   assert.match(message(out),/Model=\\"pro\\"/);
   assert.match(message(out),/Model=\\"flash\\"/);
   assert.equal(probeCount(),0);
@@ -391,11 +421,12 @@ await test('startup honors research and self overrides in injected parameters',(
 });
 await test('invalid PRO_SELF_MODEL falls back to valid PRO_WORKER_MODEL in antigravity',()=>{
   cache();
-  process.env.PRO_SELF_MODEL='flash_lite';
+  process.env.PRO_SELF_MODEL='invalid-tier';
   process.env.PRO_WORKER_MODEL='pro';
   try {
-    assert.equal(lib.targetWorkerModel('antigravity','self',base('fallback-worker')),'pro');
-    const out=hook('session-start.mjs',base('fallback-worker-card'));
+    const payload=base('fallback-worker-card',{lastUserInput:'[FORCE-PRO]'});
+    assert.equal(lib.targetWorkerModel('antigravity','self',payload),'pro');
+    const out=hook('session-start.mjs',payload);
     const md=out.injectSteps[0].systemMessage.renderInfo.markdown;
     assert(md.includes('Model="pro"'),md);
     assert(!md.includes('`pro`→`pro`'),md);

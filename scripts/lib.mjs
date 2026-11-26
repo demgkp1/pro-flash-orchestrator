@@ -3,24 +3,30 @@
  * Shared helpers for pro-flash-orchestrator hooks (v0.7.0).
  *
  * Design rules:
- *  - Never throw into the caller: every helper is exception-safe, so a hook can
- *    always print one valid JSON object and never block the agent loop.
+ *  - Hook reads fail safely. An explicit settings save must instead surface
+ *    errors to the panel; never report a partial or failed save as successful.
  *  - Nothing here writes to stdout except `output()`; hooks must emit exactly
  *    one JSON object (a stray console.log corrupts the decision).
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const PLUGIN_DIR = path.dirname(SCRIPTS_DIR);
-export const STATE_DIR = process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR
-  ? path.resolve(process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR)
+const explicitStateDir = process.env.PRO_STATE_DIR || process.env.ARGON_STATE_DIR;
+export const STATE_DIR = explicitStateDir
+  ? path.resolve(explicitStateDir)
   : process.env.PLUGIN_DATA ? path.resolve(process.env.PLUGIN_DATA)
   : process.env.PRO_HARNESS === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'plugin-data', 'pro-flash-orchestrator')
   : path.join(PLUGIN_DIR, '.state');
+// PLUGIN_DATA is not reliably shared with sidecars. This per-user AGY data
+// location survives install replacement and works with a read-only plugin.
+const PANEL_SETTINGS_FILE = path.join(explicitStateDir ? STATE_DIR
+  : path.join(os.homedir(), '.gemini', 'antigravity', 'plugin_data', 'pro-flash-orchestrator'), 'worker-settings.json');
 export const SESSION_DIR = path.join(STATE_DIR, 'sessions');
 export const LOG_FILE = path.join(STATE_DIR, 'decisions.jsonl');
 export const SPAWN_FILE = path.join(STATE_DIR, 'last_spawn.json');
@@ -416,7 +422,53 @@ export function readUpdateNotice(payload = CTX, {
   }
 }
 
-export const INVOCABLE_SUBAGENT_MODELS = new Set(['inherit', 'flash', 'pro']);
+export const INVOCABLE_SUBAGENT_MODELS = new Set(['flash_lite', 'flash', 'pro', 'inherit']);
+
+const isPanelModel = (model) => model === 'auto' || INVOCABLE_SUBAGENT_MODELS.has(model);
+
+function checkedPanelSettings(value) {
+  if (value === null || typeof value !== 'object' || Array.isArray(value) ||
+      Reflect.ownKeys(value).length !== 1 || !Object.hasOwn(value, 'model')) {
+    throw new TypeError('Expected exactly one worker setting: model');
+  }
+  const { model } = value;
+  if (!isPanelModel(model)) {
+    throw new TypeError('Worker setting must be auto, flash_lite, flash, pro or inherit');
+  }
+  return { model };
+}
+
+export function readPanelSettings() {
+  try {
+    const saved = JSON.parse(fs.readFileSync(PANEL_SETTINGS_FILE, 'utf8'));
+    // Read legacy settings without rewriting them or picking between roles.
+    if (saved && typeof saved === 'object' && Object.keys(saved).length === 2 &&
+        Object.hasOwn(saved, 'research') && Object.hasOwn(saved, 'self')) {
+      return { model: saved.research === saved.self && isPanelModel(saved.research) ? saved.research : 'auto' };
+    }
+    return checkedPanelSettings(saved);
+  } catch { return { model: 'auto' }; }
+}
+
+export function writePanelSettings(value) {
+  const settings = checkedPanelSettings(value);
+  fs.mkdirSync(path.dirname(PANEL_SETTINGS_FILE), { recursive: true, mode: 0o700 });
+  // Unlike best-effort hook telemetry, settings must NEVER fall back to an
+  // in-place copy/write. Readers see either the old or the complete new setting.
+  const tmp = `${PANEL_SETTINGS_FILE}.${randomUUID()}.tmp`;
+  const fd = fs.openSync(tmp, 'wx', 0o600);
+  try {
+    try {
+      fs.writeFileSync(fd, JSON.stringify(settings, null, 2) + '\n', 'utf8');
+      fs.fsyncSync(fd);
+    } finally { fs.closeSync(fd); }
+    fs.renameSync(tmp, PANEL_SETTINGS_FILE);
+  } catch (error) {
+    try { fs.unlinkSync(tmp); } catch { /* preserve the original error */ }
+    throw error;
+  }
+  return settings;
+}
 
 function validAntigravitySubagentModel(value) {
   if (typeof value !== 'string') return '';
@@ -424,30 +476,47 @@ function validAntigravitySubagentModel(value) {
   return INVOCABLE_SUBAGENT_MODELS.has(normalized) ? normalized : '';
 }
 
+function roleModelEnv(role) {
+  return (role === 'research' ? process.env.PRO_RESEARCH_MODEL : role === 'self' ? process.env.PRO_SELF_MODEL : '') || '';
+}
+
+function agyEnvOverride(role) {
+  return validAntigravitySubagentModel(roleModelEnv(role)) || validAntigravitySubagentModel(process.env.PRO_WORKER_MODEL) || null;
+}
+
+// Read-only role overrides. Neither the shared preference nor the
+// lower-priority, capability-dependent Hydrogen fallback is an override.
+export function panelModelOverrides() {
+  return { research: agyEnvOverride('research'), self: agyEnvOverride('self') };
+}
+
+export function economicAgyModel(payload) {
+  // Hydrogen main sessions inherit; all other main sessions use Flash.
+  return modelNames(payload).some((name) => /hydrogen/i.test(name)) ? 'inherit' : 'flash';
+}
+
+function configuredAgyModel(role, payload) {
+  const env = agyEnvOverride(role);
+  if (env) return env;
+  const { model } = readPanelSettings();
+  if (model !== 'auto') return model;
+  const hydrogen = process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true
+    ? validAntigravitySubagentModel(process.env.PRO_HYDROGEN_ID)
+    : '';
+  return hydrogen || economicAgyModel(payload);
+}
+
+export function userAllowsAgyPro(payload) {
+  // AGY supplies the original user turn; never use a task's Prompt or saved state.
+  return typeof payload?.lastUserInput === 'string' && /\[(?:FORCE-PRO|FORCE-ARGON)\]/i.test(payload.lastUserInput);
+}
+
 export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CTX) {
-  const taskSpecificEnv = taskType === 'research'
-    ? (process.env.PRO_RESEARCH_MODEL || '')
-    : taskType === 'self'
-      ? (process.env.PRO_SELF_MODEL || '')
-      : '';
-  const envCandidate = taskSpecificEnv.trim() ? taskSpecificEnv : (process.env.PRO_WORKER_MODEL || '');
   if (harness === 'antigravity') {
-    for (const candidate of [taskSpecificEnv, process.env.PRO_WORKER_MODEL]) {
-      const validEnv = validAntigravitySubagentModel(candidate);
-      if (validEnv) return validEnv;
-    }
-    const validHydrogenEnv = process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true
-      ? validAntigravitySubagentModel(process.env.PRO_HYDROGEN_ID)
-      : '';
-    if (validHydrogenEnv) return validHydrogenEnv;
-    // The host currently accepts only inherit/flash/pro. Hydrogen
-    // main sessions must inherit to avoid silently running a Gemini 3.8 worker;
-    // all other main sessions (including Gemini 4 Neon) default to "flash"
-    // (mapped to Gemini 4 Hydrogen High).
-    if (modelNames(payload).some((name) => /hydrogen/i.test(name))) return 'inherit';
-    return 'flash';
+    const preferred = configuredAgyModel(taskType, payload);
+    return preferred === 'pro' && !userAllowsAgyPro(payload) ? economicAgyModel(payload) : preferred;
   }
-  const trimmedEnv = envCandidate.trim();
+  const trimmedEnv = roleModelEnv(taskType).trim() || (process.env.PRO_WORKER_MODEL || '').trim();
   if (trimmedEnv) return trimmedEnv;
   if (harness === 'claude') return 'haiku';
   if (harness === 'codex') return 'gpt-5-mini';

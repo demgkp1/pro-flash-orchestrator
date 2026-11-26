@@ -12,7 +12,7 @@ const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-v060-'));
 const WORKSPACE = path.join(TMP, 'workspace');
 const STATE = path.join(TMP, 'state');
 fs.mkdirSync(WORKSPACE);
-for (const key of ['PRO_TEST','ARGON_TEST','PRO_HARNESS','PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL','PRO_NATIVE_ORCHESTRATOR']) process.env[key] = '';
+for (const key of ['PRO_TEST','ARGON_TEST','PRO_HARNESS','PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL','PRO_HYDROGEN_ID','PRO_NATIVE_ORCHESTRATOR']) process.env[key] = '';
 process.env.PRO_STATE_DIR = STATE;
 process.env.PRO_MODE = 'enforce';
 process.env.CODEX_HOME = path.join(TMP, 'codex-home');
@@ -102,10 +102,13 @@ await test('report discards malformed JSON values and rejects invalid day window
   }
 });
 await test('release metadata, root prompt mirrors and legacy matcher sets stay synchronized',()=>{
-  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.6');
+  const {version}=JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8'));
+  assert.match(version,/^\d+\.\d+\.\d+$/);
+  assert.equal(lib.PLUGIN_VERSION,version);
   for(const [mirror,canonical] of [['SKILL.md','skills/flash-dev/SKILL.md'],['AGENTS.md','rules/AGENTS.md']]) {
-    assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),
-      fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n'));
+    const source=fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n');
+    assert.equal(source.match(/^# .*?\(v(\d+\.\d+\.\d+)\b/m)?.[1],version,canonical);
+    assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),source);
   }
   const rootHooks=JSON.parse(fs.readFileSync(path.join(ROOT,'hooks.json'),'utf8'));
   const matchers=Object.values(rootHooks).flatMap(group=>group.PreToolUse || []).map(group=>group.matcher).sort();
@@ -144,11 +147,13 @@ await test('worker defaults and task override precedence are consistent',()=>{
     assert.equal(runtime.workerConfig(undefined,'research').workerModel,'hydrogen');
     assert.equal(runtime.workerConfig(undefined,'self').workerModel,'flash');
   } finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
-  // Legal enum overrides take effect in antigravity
-  process.env.PRO_RESEARCH_MODEL='inherit';process.env.PRO_SELF_MODEL='pro';
+  // Explicit Lite is role-local; a pro preference is not user authorization.
+  process.env.PRO_RESEARCH_MODEL='flash_lite';process.env.PRO_SELF_MODEL='pro';
   try {
-    assert.equal(lib.targetWorkerModel('antigravity','research'),'inherit');
-    assert.equal(lib.targetWorkerModel('antigravity','self'),'pro');
+    const ordinary=base('model-preferences',{modelName:'Gemini 4 Neon'});
+    assert.equal(lib.targetWorkerModel('antigravity','research',ordinary),'flash_lite');
+    assert.equal(lib.targetWorkerModel('antigravity','self',ordinary),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','self',{...ordinary,lastUserInput:'[FORCE-PRO] review'}),'pro');
   } finally {for(const key of ['PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
 });
 await test('all platform matcher files include every requested native tool name',()=>{

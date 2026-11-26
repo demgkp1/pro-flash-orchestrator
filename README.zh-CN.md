@@ -5,9 +5,9 @@
 面向通用软件工程、代码审查、Bug 排查、重构与文档研读。通过确定性的物理 Hook 守门，让旗舰主模型（Pro）聚焦核心架构决策与标杆实现，并将多文件探路、外围扩写与单元测试分流给轻量助手（Flash / Hydrogen）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.7.6-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.8.0-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#多平台支持与验收状态)
-[![Tests](https://img.shields.io/badge/Doctor-117%2F117%20Passed-green.svg)](#诊断与测试)
+[![Tests (v0.7.6)](https://img.shields.io/badge/Doctor%20v0.7.6-117%2F117%20Passed-green.svg)](#诊断与测试)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
@@ -56,6 +56,12 @@
 │  - 核对 git status 与 Audit 切片抽检    │
 └────────────────────────────────────────┘
 ```
+
+---
+
+## v0.8.0 最新特性
+
+- **Antigravity 原生编排设置面板**：在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro + Flash · 编排设置** 中选择并保存一项统一的 Worker 档位（**Auto** 恢复默认）。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。已安装的 AGY 运行包可点 **获取最新版本** 升级。详见中英双语[发布说明](docs/releases/v0.8.0.md)。
 
 ---
 
@@ -117,10 +123,10 @@
 
 ## 快速安装与免 Git 升级
 
-v0.7.6 发布包：
+v0.8.0 发布包：
 
-- [pro-flash-orchestrator-antigravity-v0.7.6.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.6/pro-flash-orchestrator-antigravity-v0.7.6.zip)（根目录为 `pro-flash-orchestrator/`）
-- [pro-flash-orchestrator-codex-v0.7.6.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.7.6/pro-flash-orchestrator-codex-v0.7.6.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-antigravity-v0.8.0.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.0/pro-flash-orchestrator-antigravity-v0.8.0.zip)（根目录为 `pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-codex-v0.8.0.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.0/pro-flash-orchestrator-codex-v0.8.0.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
 
 ### 方式一：Release 用户免 Git 在线 / 离线升级
 
@@ -129,7 +135,7 @@ v0.7.6 发布包：
 node "<插件安装目录>/scripts/update.mjs"
 
 # 使用本地已下载的 ZIP 包离线升级
-node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.7.6.zip"
+node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.8.0.zip"
 
 # 预览变更但不写入磁盘
 node "<插件安装目录>/scripts/update.mjs" --dry-run
@@ -163,7 +169,7 @@ node scripts/install.mjs
 | 守门机制 | 挂载钩子 | 判定逻辑与实际收益 |
 | :--- | :--- | :--- |
 | **角色初始化与状态卡** | `SessionStart` | 主会话启动时单次注入全场景规则（子代理自动跳过）；通过 `renderInfo` 渲染零 Token 消耗的 UI 状态卡片。 |
-| **Worker 模型路由** | `PreToolUse` (`invoke_subagent`) | 校验合法枚举（`inherit`、`flash`、`pro`），并按 AGY `v1.5.11+` 档位映射路由（`Hydrogen` → `inherit`；`Neon`/`Argon`/`Carbon` 及其他 → `flash`；`[FORCE-PRO]` → `pro`）。 |
+| **Worker 模型路由** | `PreToolUse` (`invoke_subagent`) | 按角色应用 AGY 有效档位（`inherit`、`flash_lite`、`flash`、`pro`）。内置默认策略在 Hydrogen 主会话使用 `inherit`，其余使用 `flash`；`flash_lite` 只在显式指定时使用。原生 Orchestrator 保留宿主路由；`pro` 仍须用户原话授权（`[FORCE-PRO]`）。 |
 | **Audit 动态切片额度** | `PreToolUse` (`read_file`, `view_file`) | 每次放行 `self` 派单增加 **+2** 切片抽检额度（上限 **10**）。明确起止行号且 ≤80 行时优先消耗额度，支持连续抽检多个子代理改动文件；新用户轮次清零。 |
 | **切片防泄洪与多文件拦截** | `PreToolUse` (`read_file`, `view_file`) | 未切片的 300–800 行代码自动收窄至 `[1, 150]`；>800 行代码或 >400 行文档直接拦截。拦截 Minified 单行压缩文件（>40KB 且平均行长 >4KB）。依赖库与 Artifact 路径豁免。 |
 | **同批次文件互斥锁** | `PreToolUse`（`write_file`, `edit_file`, `apply_patch`） | 在父 Session 的 `batchFileClaims` 中原子检查并认领归一化目标路径。同一子代理可重试，跨子代理冲突直接拒绝；新批次或新 Audit ID 释放认领。 |
@@ -190,7 +196,7 @@ node scripts/install.mjs
 | 平台 | 当前状态 | 说明 |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **主力完整支持** | 生产级生命周期 Hook 守门、AGY `v1.5.11+` 档位路由、Audit 动态切片配额与免 Git `update.mjs`。 |
-| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.7.6.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
+| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.8.0.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
 | **Claude Code** | **仅提供配置模板** | 提供 `hooks/claude-settings-hooks.json` 钩子适配模板，尚未进行实机真实验证。 |
 
 ### Codex 独立 Marketplace 安装
@@ -201,7 +207,7 @@ node scripts/install.mjs
 node scripts/install.mjs --platform codex --git
 ```
 
-需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.7.6.zip` 并进入 Marketplace 根目录：
+需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.8.0.zip` 并进入 Marketplace 根目录：
 
 ```bash
 node install.mjs --local
@@ -223,7 +229,7 @@ node doctor.mjs
 
 ## 诊断与测试
 
-本地发布门禁已通过：Doctor **117/117**、regressions **40/40**、v060 **48/48**、capabilities **45/45**、install **8/8**、Codex **45/45**、update **6/6**、check-update-worker **9/9**、dual-track **8/8**、marketplace **21/21**；concurrency 全部通过，未提供总数。
+v0.7.6 本地发布门禁已通过：Doctor **117/117**、regressions **40/40**、v060 **48/48**、capabilities **45/45**、install **8/8**、Codex **45/45**、update **6/6**、check-update-worker **9/9**、dual-track **8/8**、marketplace **21/21**；concurrency 全部通过，未提供总数。
 
 ### 环境体检与省流复盘
 
@@ -270,7 +276,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL 模板、审计记录与 Codex 验收证据
 ├── hooks/                         # Claude Code 与 Codex CLI 钩子适配配置
 ├── hooks.json                     # Antigravity 生命周期钩子路由
-├── plugin.json                    # Antigravity 插件清单 (v0.7.6)
+├── plugin.json                    # Antigravity 插件清单 (v0.8.0)
 ├── rules/AGENTS.md                # 常驻架构师与助手规范（根目录 AGENTS.md 为其镜像）
 ├── runtime-files.json             # 运行时分发白名单
 ├── skills/flash-dev/SKILL.md      # /flash-dev 工作流技能（根目录 SKILL.md 为其镜像）

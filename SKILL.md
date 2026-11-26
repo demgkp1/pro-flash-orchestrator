@@ -1,12 +1,12 @@
 ---
 name: flash-dev
 description: >-
-  启用 v0.7.6「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
+  启用 v0.8.0「Pro 主控架构师 + Flash 工程助手」全场景通用分流工作流。Whenever the task involves reading >=3 files, exploring an unfamiliar codebase, debugging/fixing multi-file issues, code review, refactoring, writing tests, or building any feature/script/UI/backend/algorithm (>50 lines or >=2 files), use this workflow to delegate exploration and implementation to flash. 派单契约由 Hook 自动注入（[PRO-CONTRACT]）。
 ---
 
-# `/flash-dev` (v0.7.6)：主控标杆 + Flash 执行工作流
+# `/flash-dev` (v0.8.0)：主控标杆 + Flash 执行工作流
 
-> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：仅 `Hydrogen` 主会话使用 `Model="inherit"`，`Gemini 4 Neon`/`Argon`/`Carbon` 等其他主会话默认使用 `Model="flash"`（映射至 `Gemini 4 Hydrogen High`）。派单后静默等待，严禁 `manage_subagents` 轮询。v0.7.6 彻底移除 `flash_lite` 枚举（避免降级至 3.5 Flash-Lite）、恢复 `Gemini 4 Neon` 默认路由 `"flash"` 并统一模板与环境变量回退链一致性，同时完整保留免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测与脱敏失败诊断）、Codex Git marketplace 正式版本发布以及子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
+> 模型路由、防嵌套、写入与切片守门均由 Hook 兜底。Hook 根据启动探测结果、主模型与任务配置自动路由最佳可用 Worker：自动路由时 `Hydrogen` 主会话使用 `Model="inherit"`，`Gemini 4 Neon`/`Argon`/`Carbon` 等其他主会话默认使用 `Model="flash"`（High）。派单后静默等待，严禁 `manage_subagents` 轮询。v0.8.0 支持在面板为调研与执行统一设置 Worker 档位（含 `flash_lite`，不作自动回退），同时完整保留免 Git 一键升级（`scripts/update.mjs`、后台零阻塞检测与脱敏失败诊断）、Codex Git marketplace 正式版本发布以及子代理死循环熔断（同任务连续重复执行相同命令满 3 次物理拦截，强制交回 Pro 接管）。
 
 ## 1. 三明治协同四步法
 
@@ -17,11 +17,11 @@ description: >-
 
 ## 原生 Orchestrator 与终审额度
 
-`Orchestrator (Neon)` / `Orchestrator (Argon)`（`modelName` / `model` 匹配 `/orchestrator/i`）或 `PRO_NATIVE_ORCHESTRATOR=1` 启用 **Lite Guard Mode**。原生编排自主读写与派单，保留自身的 Hydrogen 路由并豁免文件数量拦截与数量漂移催派；超大文件切片、防嵌套、禁轮询、派单契约、命令守门和子代理文件互斥锁继续生效。
+`Orchestrator (Neon)` / `Orchestrator (Argon)`（`modelName` / `model` 匹配 `/orchestrator/i`）或 `PRO_NATIVE_ORCHESTRATOR=1` 启用 **Lite Guard Mode**。原生编排自主读写与派单，保留自身的 Hydrogen 路由（不受面板设置影响）并豁免文件数量拦截与数量漂移催派；超大文件切片、防嵌套、禁轮询、派单契约、命令守门和子代理文件互斥锁继续生效。
 
 会话初始为 `explore`。每次放行 `self` 派单进入 `audit` 并增加 2 次切片额度，上限 10；明确起止行号且 ≤80 行时优先消耗额度，支持跨文件连读抽检。子代理完成后的 Audit 唤醒保留阶段与额度，普通新用户轮次重置；额度耗尽后恢复普通读取配额。父子会话各保留最近 10 条脱敏命令摘要；本批缺命令证据时提醒核实。`PreToolUse` 放行不等于执行成功，四列表格仍须提供真实测试结果；子代理同任务连续重复执行相同命令满 3 次触发死循环熔断物理拦截，强制交回 Pro 接管。
 
-`PRO_RESEARCH_MODEL` / `PRO_SELF_MODEL` 分别指定探路与实现模型，优先于 `PRO_WORKER_MODEL`；Antigravity 当前配置应使用合法枚举，如 `inherit` / `flash`。默认 Claude 为 `haiku`、Codex 为 `gpt-5-mini`。Codex 原生入口继续验证实际选中模型的提供方与证明，已有用户配置保留。
+`PRO_RESEARCH_MODEL` / `PRO_SELF_MODEL` 分别指定探路与实现模型，优先于 `PRO_WORKER_MODEL`；在 Antigravity 中，这些环境变量的有效值优先于面板的统一非 `auto` 设置。默认 Claude 为 `haiku`、Codex 为 `gpt-5-mini`。Codex 原生入口继续验证实际选中模型的提供方与证明，已有用户配置保留。
 
 ## AGY 启动探测与动态策略
 
@@ -29,9 +29,9 @@ AGY 代号：`Gemini 4 Neon`（`gemini-4-neon-low/medium/high/xhigh`）为 Pro/U
 
 仅主会话 `SessionStart` 执行有界的 `agy models` 探测，结果写入 `STATE_DIR/capabilities.json`。相同 AGY 父进程内复用不足 12 小时的结果，跨终端复用不足 1 小时的结果；后续 PreInvocation / PreToolUse 只读缓存。桌面端 CLI 不可用时从 Neon / Argon / Carbon / Hydrogen / Orchestrator 主模型推断权限；明确 CLI 无 Hydrogen 权限时保持 Flash 回退。
 
-Antigravity 的 `invoke_subagent.Model` 当前只接受小写枚举 `inherit`、`flash`、`pro`（已移除 `flash_lite` 以避免降级至 3.5 Flash-Lite）。按 AGY `v1.5.11+` 官方档位映射规范，`invoke_subagent` 统一使用档位别名：`flash` → `Gemini 4 Hydrogen High`，`[FORCE-PRO]` 下的 `pro` → `Gemini 4 Hydrogen XHigh`，Hydrogen 主会话 `inherit` → 继承 Hydrogen。Hydrogen 主会话识别为 `hydrogen-main`，使用 `inherit` 让子代理继承 Gemini 4 Hydrogen；其他主会话（含 `Gemini 4 Neon`、`Argon`、`Carbon`）默认使用合法的 `flash`；`hydrogen-worker` 表示探测到 Hydrogen 能力，`flash-fallback` 表示按 Flash 回退，两者保持严格分流。启动卡片显示实际推荐的 research / self 参数。
+Antigravity 的 `invoke_subagent.Model` 使用小写枚举 `inherit`、`flash`（High）、`pro`（XHigh）及显式配置时的 `flash_lite`；`TypeName` 由主模型按任务决定；档位由 `Model` 指定，不另传推理参数，也不保证具体模型 SKU。`pro` 仅在本轮用户原话含 `[FORCE-PRO]` 或旧版 `[FORCE-ARGON]` 时放行（原生编排同样适用），面板、环境变量和派单 Prompt 不能代替授权。Hydrogen 主会话识别为 `hydrogen-main`，默认使用 `inherit` 让子代理继承 Gemini 4 Hydrogen；其他主会话（含 `Gemini 4 Neon`、`Argon`、`Carbon`）默认使用合法的 `flash`；`hydrogen-worker` 表示探测到 Hydrogen 能力，`flash-fallback` 表示按 Flash 回退，两者保持严格分流。启动卡片显示实际推荐的 research / self 参数。
 
-`PRO_HYDROGEN_ID` 供未来宿主 Schema 开放自定义模型 ID 时显式配置；仅在 `hasHydrogen === true` 时生效，任务与通用模型环境变量仍优先。当前模板使用合法枚举，避免直接传入未获 Schema 支持的 `hydrogen`。
+`PRO_HYDROGEN_ID` 可显式配置；仅在 `hasHydrogen === true` 且取值合法时生效，任务与通用模型环境变量、面板的统一非 `auto` 设置仍优先。当前模板使用合法枚举，避免直接传入未获 Schema 支持的 `hydrogen`。
 
 AGY 非子代理主模型为 Flash 时启用 `flash-main-relaxed`：普通读取最多 6 个文件、源码直改最多 4 个文件，避免小任务派生同级 Worker；子代理不触发此策略。Audit 的 ≤80 行切片额度、大文件保护与 Lite 原生编排豁免继续生效。
 
@@ -48,15 +48,15 @@ AGY 非子代理主模型为 Flash 时启用 `flash-main-relaxed`：普通读取
 
 ## 3. 标准派单模板
 
-> **跨平台等价调用**：Antigravity: `invoke_subagent(Model="flash")`（仅 `Hydrogen` 主会话使用 `Model="inherit"`，其他主会话默认 `flash`） / Claude Code: `Agent` 或 `Task(model="haiku")` / Codex CLI: `spawn_agent(model="gpt-5-mini")`（Hook 自动归一化各平台工具并注入对应轻量模型与契约）。
+> **跨平台等价调用**：Antigravity: `invoke_subagent(Model="flash")`（自动路由时 `Hydrogen` 主会话使用 `Model="inherit"`，其他主会话默认 `flash`） / Claude Code: `Agent` 或 `Task(model="haiku")` / Codex CLI: `spawn_agent(model="gpt-5-mini")`（Hook 自动归一化各平台工具并注入对应轻量模型与契约）。
 
-### 探路调研（`TypeName="research"`, `Model="flash"`，仅 `Hydrogen` 主会话用 `Model="inherit"`，由 Hook 自动路由）
+### 探路调研（`TypeName="research"`, `Model="flash"`，自动路由时 `Hydrogen` 主会话用 `Model="inherit"`，由 Hook 自动路由）
 ```text
 [FLASH-WORKER] 调研：<路径/目录/代码库/日志>
 提取功能清单、关键行号、根因与受影响文件列表，直接在消息中返回，严禁粘贴长源码。
 ```
 
-### 工程实现（`TypeName="self"`, `Model="flash"`，仅 `Hydrogen` 主会话用 `Model="inherit"`，由 Hook 自动路由）
+### 工程实现（`TypeName="self"`, `Model="flash"`，自动路由时 `Hydrogen` 主会话用 `Model="inherit"`，由 Hook 自动路由）
 ```text
 [FLASH-WORKER] 严格基于标杆实现（禁止再派单）：
 1. 必读标杆：<Pro 写入的核心文件绝对路径>

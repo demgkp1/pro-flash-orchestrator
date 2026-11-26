@@ -19,7 +19,12 @@
   "adapters": {
     "antigravity": [
       "scripts/check-update-worker.mjs",
-      "scripts/update.mjs"
+      "scripts/update.mjs",
+      "sidecars/panel/sidecar.json",
+      "sidecars/panel/main.mjs",
+      "sidecars/panel/index.html",
+      "sidecars/panel/style.css",
+      "sidecars/panel/app.js"
     ],
     "claude": ["hooks/claude-settings-hooks.json"],
     "codex": ["hooks/codex-hooks.json"]

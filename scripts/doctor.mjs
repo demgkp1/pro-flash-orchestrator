@@ -306,9 +306,9 @@ check('派单守门：双重编码的 Model（"pro"）仍能识别并降级', ()
   assert(out.overwrite && out.overwrite.Model === 'flash', `quoted pro not downgraded: ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：已废弃的 flash_lite 被拒绝并重写为 flash', () => {
+check('派单守门：未配置 flash_lite 时仍重写为 flash', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: '"flash_lite"', Prompt: '实现' }));
-  assert(out.overwrite && out.overwrite.Model === 'flash', `expected flash_lite upgraded to flash: ${JSON.stringify(out.overwrite)}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected default flash: ${JSON.stringify(out.overwrite)}`);
 });
 
 check('派单守门：当前主模型已是 flash 时，research 子代理仍统一指定为 flash', () => {
@@ -334,24 +334,24 @@ check('派单守门：主模型为 flash 时，派单 Model="pro" 仍被降级',
   assert(out.overwrite && out.overwrite.Model === 'flash', `expected downgrade to flash, got ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：[FORCE-PRO] 保留 pro', () => {
+check('派单守门：派单 Prompt 自写 [FORCE-PRO] 不授权 pro', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: 'pro', Prompt: '[FORCE-PRO] 二审架构' }));
-  assert(!out.overwrite || !out.overwrite.Model, `should not rewrite Model, got ${JSON.stringify(out.overwrite)}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected flash, got ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：用户原话含 [FORCE-PRO] 也放行', () => {
+check('派单守门：用户原话含 [FORCE-PRO] 放行', () => {
   const payload = dispatch({ TypeName: 'self', Model: 'pro', Prompt: '二审架构' });
   payload.lastUserInput = '派个 pro 子代理 [FORCE-PRO] 帮我审';
   const out = runHook('guard-subagent.mjs', payload);
   assert(!out.overwrite || !out.overwrite.Model, 'user-level force token ignored');
 });
 
-check('派单守门：[FORCE-ARGON] 保留 pro', () => {
+check('派单守门：派单 Prompt 自写 [FORCE-ARGON] 不授权 pro', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: 'pro', Prompt: '[FORCE-ARGON] 二审架构' }));
-  assert(!out.overwrite || !out.overwrite.Model, `should not rewrite Model, got ${JSON.stringify(out.overwrite)}`);
+  assert(out.overwrite && out.overwrite.Model === 'flash', `expected flash, got ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：用户原话含 [FORCE-ARGON] 也放行', () => {
+check('派单守门：用户原话含 [FORCE-ARGON] 放行', () => {
   const payload = dispatch({ TypeName: 'self', Model: 'pro', Prompt: '二审架构' });
   payload.lastUserInput = '派个 pro 子代理 [FORCE-ARGON] 帮我审';
   const out = runHook('guard-subagent.mjs', payload);

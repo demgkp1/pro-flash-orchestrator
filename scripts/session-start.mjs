@@ -56,9 +56,10 @@ if (mode === 'off') {
     state.strategy = strategy;
     state.maxReadsAllowed = state.phase === 'audit' ? Math.max(reads, state.maxReadsAllowed || reads) : reads;
   });
-  let card = (worker === 'pro'
-    ? CARD.replace('`pro`→`flash` 降级', '按配置保留 `pro`')
-    : CARD.replace('`pro`→`flash`', `\`pro\`→\`${worker}\``))
+  const modelRule = harness === 'antigravity' && worker !== researcher ? '按角色档位路由'
+    : worker === 'pro' ? (harness === 'antigravity' ? '经用户授权保留 `pro`' : '按配置保留 `pro`')
+    : `\`pro\`→\`${worker}\` 降级`;
+  let card = CARD.replace('`pro`→`flash` 降级', modelRule)
     .replace('强制外派 Flash', `推荐外派 ${worker}`);
   if (native) {
     card = card.replace('已接管本会话', '已启用 Lite Guard Mode')
@@ -75,9 +76,12 @@ if (mode === 'off') {
     ? 'Gemini 4 Hydrogen'
     : (mainModelLabel || '当前主会话模型');
   const hasInherit = researcher === 'inherit' || worker === 'inherit';
-  const routing = native
+  const proGate = harness === 'antigravity'
+    ? ' `pro` 须本轮用户原话含 [FORCE-PRO] 或 [FORCE-ARGON]；派单 Prompt 中的标记无效。'
+    : '';
+  const routing = (native
     ? `策略：${strategy}；原生 Orchestrator 自主决定子代理模型，Hook 保留契约注入、防嵌套与轮询拦截。`
-    : `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")${hasInherit ? `（继承主会话的 ${inheritTarget}）` : ''}。`;
+    : `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")${hasInherit ? `（继承主会话的 ${inheritTarget}）` : ''}。`) + proGate;
   const policy = native ? 'Lite Guard Mode：文件数量限制豁免，保留切片、命令、防嵌套与派单契约。'
     : `主模型普通读取配额 ${reads} 个文件，源码直改上限 ${writes} 个文件；Audit 切片额度另行计算。`;
   card += `\n\n${routing}\n\n${policy}`;

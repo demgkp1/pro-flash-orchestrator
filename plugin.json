@@ -1,9 +1,9 @@
 {
   "name": "pro-flash-orchestrator",
   "displayName": "pro-flash-orchestrator",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "license": "MIT",
-  "description": "v0.7.6 Pro 主控与轻量助手分流：彻底移除 flash_lite 枚举（避免降级至 3.5 Flash-Lite），恢复 Neon/Argon/Carbon 主会话默认路由至 \"flash\"（映射至 Gemini 4 Hydrogen (High)），仅 Hydrogen 主会话使用 \"inherit\"，并统一规则/技能模板与跨平台环境变量回退链一致性；完整保留 Codex Git marketplace 正式版本发布、事务式安装迁移与升级兼容桥、纯只读双轨验收契约、免 Git 一键升级与同批源码互斥锁。",
+  "description": "v0.8.0 Pro 主控与轻量助手分流：新增 AGY 设置面板，支持配置统一的子代理模型和推理档位，由主模型按任务决定调研或执行，可显式选择 flash_lite、检查并安装 GitHub 稳定版本；保留 Neon/Argon/Carbon 主会话默认使用 \"flash\"、Hydrogen 主会话默认使用 \"inherit\" 的路由策略；完整保留 Codex Git marketplace 正式版本发布、事务式安装迁移与升级兼容桥、纯只读双轨验收契约、免 Git 一键升级与同批源码互斥锁。",
   "logo": "assets/logo.svg",
   "repository": "https://github.com/demgkp1/pro-flash-orchestrator",
   "homepage": "https://github.com/demgkp1/pro-flash-orchestrator",
