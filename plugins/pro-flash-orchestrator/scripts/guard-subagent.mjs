@@ -4,7 +4,7 @@
  *
  * 1. recursion  — a sub-agent may not dispatch another sub-agent (hard deny).
  * 2. model leak — route ordinary dispatches to a host-compatible worker model;
- *                 native Orchestrator routing and explicit overrides are preserved.
+ *                 AGY pro requires user authorization, including in native mode.
  * 3. contract   — the report contract is appended to the dispatch prompt, so it
  *                 cannot be forgotten by the model. Idempotent via a marker.
  *
@@ -17,6 +17,7 @@ import {
   STATE_DIR,
   getHarness,
   currentMode,
+  economicAgyModel,
   getArgs,
   isNativeOrchestrator,
   isSubAgent,
@@ -31,6 +32,7 @@ import {
   targetWorkerModel,
   toolName,
   updateSession,
+  userAllowsAgyPro,
   writeSession,
 } from './lib.mjs';
 
@@ -242,17 +244,25 @@ function decide() {
     const typeName = clean(args.TypeName).toLowerCase();
     const promptKey = typeof args.Prompt === 'string' ? 'Prompt' : typeof args.prompt === 'string' ? 'prompt' : null;
     const prompt = promptKey ? String(args[promptKey]) : '';
-    const forced = (getHarness() !== 'codex' && FORCE_PATTERN.test(prompt)) || FORCE_PATTERN.test(lastUserInput(payload));
+    const harness = getHarness();
+    const agy = harness === 'antigravity';
+    const forced = agy ? userAllowsAgyPro(payload)
+      : (harness !== 'codex' && FORCE_PATTERN.test(prompt)) || FORCE_PATTERN.test(lastUserInput(payload));
     const model = clean(args.Model);
     const lower = model.toLowerCase();
     const currentModel = String((payload && payload.modelName) || '').toLowerCase();
 
-    if (!forced && !isNativeOrchestrator(payload)) {
-      const targetModel = targetWorkerModel(getHarness(), typeName, payload);
-      const targetLower = targetModel.toLowerCase();
-      if (lower !== targetLower || args.Model !== targetModel) {
-        overwrite.Model = targetModel;
-      }
+    let targetModel;
+    if (isNativeOrchestrator(payload)) {
+      if (agy && lower === 'pro' && !forced) targetModel = economicAgyModel(payload);
+    } else if (!forced || agy) {
+      const preferred = targetWorkerModel(harness, typeName, payload);
+      // A configured pro can take effect on an authorized turn. Otherwise keep
+      // the old pass-through for genuine force requests (including host IDs).
+      if (!forced || (preferred === 'pro' && lower !== 'pro')) targetModel = preferred;
+    }
+    if (targetModel && (lower !== targetModel.toLowerCase() || args.Model !== targetModel)) {
+      overwrite.Model = targetModel;
     }
 
     const isMulti = typeName === 'research' && (admittedResearchSpawns > 1 || /\[MULTI-RESEARCH\]/i.test(prompt));

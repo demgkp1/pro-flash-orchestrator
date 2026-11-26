@@ -1,6 +1,6 @@
 {
   "name": "pro-flash-orchestrator",
-  "version": "0.7.6",
+  "version": "0.8.0",
   "description": "Native Codex orchestration guards",
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
