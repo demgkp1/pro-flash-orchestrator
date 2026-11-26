@@ -306,7 +306,7 @@ check('派单守门：双重编码的 Model（"pro"）仍能识别并降级', ()
   assert(out.overwrite && out.overwrite.Model === 'flash', `quoted pro not downgraded: ${JSON.stringify(out.overwrite)}`);
 });
 
-check('派单守门：flash_lite 自动升级重写为 flash', () => {
+check('派单守门：已废弃的 flash_lite 被拒绝并重写为 flash', () => {
   const out = runHook('guard-subagent.mjs', dispatch({ TypeName: 'self', Model: '"flash_lite"', Prompt: '实现' }));
   assert(out.overwrite && out.overwrite.Model === 'flash', `expected flash_lite upgraded to flash: ${JSON.stringify(out.overwrite)}`);
 });

@@ -102,7 +102,7 @@ await test('report discards malformed JSON values and rejects invalid day window
   }
 });
 await test('release metadata, root prompt mirrors and legacy matcher sets stay synchronized',()=>{
-  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.5');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(ROOT,'plugin.json'),'utf8')).version,'0.7.6');
   for(const [mirror,canonical] of [['SKILL.md','skills/flash-dev/SKILL.md'],['AGENTS.md','rules/AGENTS.md']]) {
     assert.equal(fs.readFileSync(path.join(ROOT,mirror),'utf8').replace(/\r\n/g,'\n'),
       fs.readFileSync(path.join(ROOT,canonical),'utf8').replace(/\r\n/g,'\n'));
@@ -145,9 +145,9 @@ await test('worker defaults and task override precedence are consistent',()=>{
     assert.equal(runtime.workerConfig(undefined,'self').workerModel,'flash');
   } finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
   // Legal enum overrides take effect in antigravity
-  process.env.PRO_RESEARCH_MODEL='flash_lite';process.env.PRO_SELF_MODEL='pro';
+  process.env.PRO_RESEARCH_MODEL='inherit';process.env.PRO_SELF_MODEL='pro';
   try {
-    assert.equal(lib.targetWorkerModel('antigravity','research'),'flash_lite');
+    assert.equal(lib.targetWorkerModel('antigravity','research'),'inherit');
     assert.equal(lib.targetWorkerModel('antigravity','self'),'pro');
   } finally {for(const key of ['PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
 });

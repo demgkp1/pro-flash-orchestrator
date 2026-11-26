@@ -48,7 +48,7 @@ function runGuard(script,payload) {
   const out=JSON.parse(result.stdout || '{}');
   if(out.hookSpecificOutput?.permissionDecisionReason) {
     out.hookSpecificOutput.permissionDecisionReason=out.hookSpecificOutput.permissionDecisionReason
-      .replace(/invoke_subagent\(TypeName="self", Model="flash"\)/g,'spawn_agent')
+      .replace(/invoke_subagent\(TypeName="(?:self|research)",\s*Model="[^"]*"\)/g,'spawn_agent')
       .replace(/invoke_subagent\(TypeName="self"\|"research", Model="flash"\)/g,'spawn_agent')
       .replace(/静默等待系统异步唤醒与子代理消息通知/g,'使用 Codex 原生等待收集结果')
       .replace(/静默等待子代理消息/g,'使用 Codex 原生等待收集结果');

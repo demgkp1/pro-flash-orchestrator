@@ -56,10 +56,13 @@ if (mode === 'off') {
     state.strategy = strategy;
     state.maxReadsAllowed = state.phase === 'audit' ? Math.max(reads, state.maxReadsAllowed || reads) : reads;
   });
-  let card = CARD.replace('`pro`→`flash`', `\`pro\`→\`${worker}\``)
+  let card = (worker === 'pro'
+    ? CARD.replace('`pro`→`flash` 降级', '按配置保留 `pro`')
+    : CARD.replace('`pro`→`flash`', `\`pro\`→\`${worker}\``))
     .replace('强制外派 Flash', `推荐外派 ${worker}`);
   if (native) {
     card = card.replace('已接管本会话', '已启用 Lite Guard Mode')
+      .replace(/\| 派单守门 \|[^\n]+/, '| 派单守门 | 保留原生模型路由，自动追加契约、阻断套娃、拦截 `manage_subagents` 轮询 |')
       .replace(/\| 写入守门 \|[^\n]+/, '| 写入守门 | 原生 Orchestrator 自主读写编排，豁免文件数量拦截 |')
       .replace(/\| 读取守门 \|[^\n]+/, '| 读取守门 | 豁免文件数量拦截；保留超大文件切片保护 |');
   } else if (relaxed) {
@@ -67,10 +70,14 @@ if (mode === 'off') {
       .replace(/\| 写入守门 \|[^\n]+/, '| 写入守门 | Flash 主模型可直改最多 4 个源码文件 |')
       .replace(/\| 读取守门 \|[^\n]+/, '| 读取守门 | Flash 主模型可读取最多 6 个文件；保留大文件与 Audit 切片保护 |');
   }
-  const isHydrogen = strategy === 'hydrogen-main' || worker === 'inherit';
-  const routing = isHydrogen
-    ? `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="inherit")（继承主会话的 Gemini 4 Hydrogen）。`
-    : `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")。`;
+  const mainModelLabel = String(payload?.modelName || payload?.model || '').trim();
+  const inheritTarget = strategy === 'hydrogen-main'
+    ? 'Gemini 4 Hydrogen'
+    : (mainModelLabel || '当前主会话模型');
+  const hasInherit = researcher === 'inherit' || worker === 'inherit';
+  const routing = native
+    ? `策略：${strategy}；原生 Orchestrator 自主决定子代理模型，Hook 保留契约注入、防嵌套与轮询拦截。`
+    : `策略：${strategy}；推荐 invoke_subagent(TypeName="research", Model="${researcher}") / invoke_subagent(TypeName="self", Model="${worker}")${hasInherit ? `（继承主会话的 ${inheritTarget}）` : ''}。`;
   const policy = native ? 'Lite Guard Mode：文件数量限制豁免，保留切片、命令、防嵌套与派单契约。'
     : `主模型普通读取配额 ${reads} 个文件，源码直改上限 ${writes} 个文件；Audit 切片额度另行计算。`;
   card += `\n\n${routing}\n\n${policy}`;
@@ -78,7 +85,7 @@ if (mode === 'off') {
   if (updateNotice) {
     card += `\n\n---\n🔔 **发现新版本 v${updateNotice.latestVersion}**（当前 v${updateNotice.currentVersion}）：终端运行 \`${updateNotice.updateCommand}\` 一键更新精简包，或[前往 Releases 下载覆盖](${updateNotice.releaseUrl})`;
   }
-  logDecision({ hook: 'session-start', action: mode === 'shadow' ? 'shadow-pass' : 'inject', mode, strategy, worker });
+  logDecision({ hook: 'session-start', action: mode === 'shadow' ? 'shadow-pass' : 'inject', mode, strategy, worker, researcher });
   if (mode === 'shadow') {
     output({});
   } else {

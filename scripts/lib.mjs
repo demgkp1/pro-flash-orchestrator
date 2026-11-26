@@ -416,7 +416,7 @@ export function readUpdateNotice(payload = CTX, {
   }
 }
 
-export const INVOCABLE_SUBAGENT_MODELS = new Set(['inherit', 'flash_lite', 'flash', 'pro']);
+export const INVOCABLE_SUBAGENT_MODELS = new Set(['inherit', 'flash', 'pro']);
 
 function validAntigravitySubagentModel(value) {
   if (typeof value !== 'string') return '';
@@ -425,27 +425,30 @@ function validAntigravitySubagentModel(value) {
 }
 
 export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CTX) {
-  const envCandidate = (taskType === 'research' && process.env.PRO_RESEARCH_MODEL)
-    ? process.env.PRO_RESEARCH_MODEL
-    : (taskType === 'self' && process.env.PRO_SELF_MODEL)
-      ? process.env.PRO_SELF_MODEL
-      : process.env.PRO_WORKER_MODEL || '';
+  const taskSpecificEnv = taskType === 'research'
+    ? (process.env.PRO_RESEARCH_MODEL || '')
+    : taskType === 'self'
+      ? (process.env.PRO_SELF_MODEL || '')
+      : '';
+  const envCandidate = taskSpecificEnv.trim() ? taskSpecificEnv : (process.env.PRO_WORKER_MODEL || '');
   if (harness === 'antigravity') {
-    const validEnv = validAntigravitySubagentModel(envCandidate);
-    if (validEnv) return validEnv;
+    for (const candidate of [taskSpecificEnv, process.env.PRO_WORKER_MODEL]) {
+      const validEnv = validAntigravitySubagentModel(candidate);
+      if (validEnv) return validEnv;
+    }
     const validHydrogenEnv = process.env.PRO_HYDROGEN_ID && readCapabilities(payload).hasHydrogen === true
       ? validAntigravitySubagentModel(process.env.PRO_HYDROGEN_ID)
       : '';
     if (validHydrogenEnv) return validHydrogenEnv;
-    // The host currently accepts only inherit/flash_lite/flash/pro. Hydrogen
-    // main sessions must inherit to avoid silently running a Gemini 3.8 worker.
-    // In AGY 2.35.2, Neon main sessions also fail model identifier resolution
-    // when using the "flash" alias, so they must use "inherit" unless an
-    // explicit valid enum env var (e.g. PRO_WORKER_MODEL) is set above.
-    if (modelNames(payload).some((name) => /hydrogen|neon/i.test(name))) return 'inherit';
+    // The host currently accepts only inherit/flash/pro. Hydrogen
+    // main sessions must inherit to avoid silently running a Gemini 3.8 worker;
+    // all other main sessions (including Gemini 4 Neon) default to "flash"
+    // (mapped to Gemini 4 Hydrogen High).
+    if (modelNames(payload).some((name) => /hydrogen/i.test(name))) return 'inherit';
     return 'flash';
   }
-  if (envCandidate) return envCandidate;
+  const trimmedEnv = envCandidate.trim();
+  if (trimmedEnv) return trimmedEnv;
   if (harness === 'claude') return 'haiku';
   if (harness === 'codex') return 'gpt-5-mini';
   return 'flash';

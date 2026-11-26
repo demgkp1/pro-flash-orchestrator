@@ -158,7 +158,7 @@ await test('parseAvailableModels and CLI probe parse Gemini 4 Neon tiers and set
     assert(result.availableModels.includes(id), id);
   }
 });
-await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-worker and inherit target',()=>{
+await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-worker and flash target',()=>{
   for (const modelFields of [{modelName:'Gemini 4 Neon (High)'}, {modelName:'', model:'Gemini 4 Neon (High)'}]) {
     const payload = base('neon-main', modelFields);
     const caps = lib.readCapabilities(payload);
@@ -168,34 +168,29 @@ await test('Gemini 4 Neon main infers hasNeon and hasHydrogen with hydrogen-work
     assert.equal(caps.strategy, 'hydrogen-worker');
     assert.notEqual(caps.strategy, 'flash-main-relaxed');
     assert.notEqual(caps.strategy, 'hydrogen-main');
-    assert.equal(lib.targetWorkerModel('antigravity', 'self', payload), 'inherit');
-    assert.equal(lib.targetWorkerModel('antigravity', 'research', payload), 'inherit');
+    assert.equal(lib.targetWorkerModel('antigravity', 'self', payload), 'flash');
+    assert.equal(lib.targetWorkerModel('antigravity', 'research', payload), 'flash');
   }
   assert.equal(calls.length, 0);
 });
 await test('Hydrogen ACL uses legal flash by default and enforces INVOCABLE_SUBAGENT_MODELS enum protection',()=>{
   cache();
   assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
-  // Non-enum PRO_HYDROGEN_ID or PRO_SELF_MODEL falls back to flash on Argon main
-  for(const nonEnum of ['gemini-4-hydrogen-medium','custom-hydrogen','gemini-4-hydrogen']) {
+  // Non-enum PRO_HYDROGEN_ID or PRO_SELF_MODEL (including removed flash_lite) falls back to flash on Argon main
+  const hydrogenPayload = base('worker-h', {modelName:'Gemini 4 Hydrogen (Medium)'});
+  for(const nonEnum of ['flash_lite','gemini-4-hydrogen-medium','custom-hydrogen','gemini-4-hydrogen']) {
     process.env.PRO_HYDROGEN_ID=nonEnum;
     assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
     process.env.PRO_HYDROGEN_ID='';
     process.env.PRO_SELF_MODEL=nonEnum;
     assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
     process.env.PRO_SELF_MODEL='';
   }
-  // Non-enum falls back to inherit on Hydrogen main session
-  const hydrogenPayload = base('worker-h', {modelName:'Gemini 4 Hydrogen (Medium)'});
-  process.env.PRO_HYDROGEN_ID='gemini-4-hydrogen-medium';
-  assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
-  process.env.PRO_HYDROGEN_ID='';
-  process.env.PRO_SELF_MODEL='custom-hydrogen';
-  assert.equal(lib.targetWorkerModel('antigravity','self',hydrogenPayload),'inherit');
-  process.env.PRO_SELF_MODEL='';
 
   // Legal enum values take effect under antigravity
-  for(const legal of ['flash_lite','flash','pro','inherit']) {
+  for(const legal of ['flash','pro','inherit']) {
     process.env.PRO_HYDROGEN_ID=legal;
     assert.equal(lib.targetWorkerModel('antigravity','self',base('worker')),legal);
     process.env.PRO_HYDROGEN_ID='';
@@ -227,7 +222,7 @@ await test('Hydrogen child evidence and other harnesses never receive hydrogen-m
   assert(!fs.existsSync(lib.SESSION_DIR),'capability readers must not persist identity');
 });
 await test('ordinary AGY dispatches satisfy the host Model enum and Hydrogen inherits',()=>{
-  const allowed=new Set(['inherit','flash_lite','flash','pro']);
+  const allowed=new Set(['inherit','flash','pro']);
   cache();
   for(const [index,modelName] of ['Argon','Carbon','Opus','Gemini 3.8 Flash','Gemini 4 Hydrogen'].entries()) {
     for(const type of ['research','self']) {
@@ -240,15 +235,15 @@ await test('ordinary AGY dispatches satisfy the host Model enum and Hydrogen inh
     }
   }
 });
-await test('guard-subagent rewrites Model="flash" to Model="inherit" under Gemini 4 Neon main session',()=>{
+await test('guard-subagent rewrites Model="flash_lite" to Model="flash" under Gemini 4 Neon main session',()=>{
   cache();
   for(const modelFields of [{modelName:'Gemini 4 Neon (High)'},{modelName:'',model:'Gemini 4 Neon (Medium)'}]) {
     for(const type of ['research','self']) {
-      const args={TypeName:type,Model:'flash',Prompt:'bounded task'};
+      const args={TypeName:type,Model:'flash_lite',Prompt:'bounded task'};
       const out=hook('guard-subagent.mjs',base('neon-rewrite-'+type,{...modelFields,toolCall:{name:'invoke_subagent',args}}));
       assert.equal(decision(out),'allow');
       const effective={...args,...out.overwrite};
-      assert.equal(effective.Model,'inherit');
+      assert.equal(effective.Model,'flash');
       assert(effective.Prompt.includes('[PRO-CONTRACT]'));
     }
   }
@@ -315,11 +310,11 @@ await test('task and common overrides preserve priority across harnesses',()=>{
   }
   finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
   // Legal enum values take effect under antigravity
-  process.env.PRO_WORKER_MODEL='flash_lite';process.env.PRO_RESEARCH_MODEL='pro';process.env.PRO_SELF_MODEL='flash_lite';
+  process.env.PRO_WORKER_MODEL='inherit';process.env.PRO_RESEARCH_MODEL='pro';process.env.PRO_SELF_MODEL='flash';
   try {
     assert.equal(lib.targetWorkerModel('antigravity','research'),'pro');
-    assert.equal(lib.targetWorkerModel('antigravity','self'),'flash_lite');
-    assert.equal(lib.targetWorkerModel('antigravity'),'flash_lite');
+    assert.equal(lib.targetWorkerModel('antigravity','self'),'flash');
+    assert.equal(lib.targetWorkerModel('antigravity'),'inherit');
   }
   finally {for(const key of ['PRO_WORKER_MODEL','PRO_RESEARCH_MODEL','PRO_SELF_MODEL'])process.env[key]='';}
   assert.equal(lib.targetWorkerModel('codex'),'gpt-5-mini');assert.equal(lib.targetWorkerModel('claude'),'haiku');
@@ -370,6 +365,13 @@ await test('Hydrogen startup cards show hydrogen-main and legal inherited resear
   assert(!message(out).includes('Model=\\"hydrogen\\"'));
   assert.equal(lib.readSession('start-hydrogen').strategy,'hydrogen-main');
 });
+await test('Neon startup cards show flash route instead of Gemini 4 Hydrogen',()=>{
+  const out=hook('session-start.mjs',base('start-neon',{modelName:'Gemini 4 Neon (High)'}));
+  const msg=message(out);
+  assert.match(msg,/hydrogen-worker/);
+  assert.match(msg,/Model=\\"flash\\"/);
+  assert(!msg.includes('Gemini 4 Hydrogen'));
+});
 await test('startup fallback and relaxed cards match effective Worker and limits',()=>{
   const out=hook('session-start.mjs',base('start-fallback'),{PROBE_MODELS:'["gemini-3.8-flash"]'});assert.match(message(out),/flash-fallback/);assert.match(message(out),/Model=\\"flash\\"/);
   const relaxed=hook('session-start.mjs',base('start-relaxed',{modelName:'Flash'}));assert.match(message(relaxed),/flash-main-relaxed/);assert.match(message(relaxed),/最多 4/);assert.match(message(relaxed),/最多 6/);assert.equal(lib.readSession('start-relaxed').maxReadsAllowed,6);
@@ -377,8 +379,8 @@ await test('startup fallback and relaxed cards match effective Worker and limits
 await test('startup honors research and self overrides in injected parameters',()=>{
   cache();
   // Valid enum override takes effect
-  const out=hook('session-start.mjs',base('overrides'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'flash_lite'});
-  assert.match(message(out),/flash_lite/);
+  const out=hook('session-start.mjs',base('overrides'),{PRO_RESEARCH_MODEL:'flash',PRO_SELF_MODEL:'pro'});
+  assert.match(message(out),/Model=\\"pro\\"/);
   assert.match(message(out),/Model=\\"flash\\"/);
   assert.equal(probeCount(),0);
   // Non-enum override safely falls back to flash under antigravity without exposing invalid model enum
@@ -386,6 +388,33 @@ await test('startup honors research and self overrides in injected parameters',(
   assert(!message(fallback).includes('custom-hydrogen'));
   assert.match(message(fallback),/Model=\\"flash\\"/);
   assert.equal(probeCount(),0);
+});
+await test('invalid PRO_SELF_MODEL falls back to valid PRO_WORKER_MODEL in antigravity',()=>{
+  cache();
+  process.env.PRO_SELF_MODEL='flash_lite';
+  process.env.PRO_WORKER_MODEL='pro';
+  try {
+    assert.equal(lib.targetWorkerModel('antigravity','self',base('fallback-worker')),'pro');
+    const out=hook('session-start.mjs',base('fallback-worker-card'));
+    const md=out.injectSteps[0].systemMessage.renderInfo.markdown;
+    assert(md.includes('Model="pro"'),md);
+    assert(!md.includes('`pro`→`pro`'),md);
+  } finally {
+    process.env.PRO_SELF_MODEL='';
+    process.env.PRO_WORKER_MODEL='';
+  }
+});
+await test('session-start cards explain inherit research route and native Orchestrator routing accurately',()=>{
+  cache();
+  const inheritResearch=hook('session-start.mjs',base('inherit-research',{modelName:'Gemini 4 Neon (High)'}),{PRO_RESEARCH_MODEL:'inherit'});
+  const inheritMsg=message(inheritResearch);
+  assert(inheritMsg.includes('Model=\\"inherit\\"'),inheritMsg);
+  assert(inheritMsg.includes('继承主会话的 Gemini 4 Neon (High)'),inheritMsg);
+  const nativeOut=hook('session-start.mjs',base('native-card',{modelName:'Orchestrator (Neon)'}));
+  const nativeMd=nativeOut.injectSteps[0].systemMessage.renderInfo.markdown;
+  assert(nativeMd.includes('保留原生模型路由'),nativeMd);
+  assert(!nativeMd.includes('降级'),nativeMd);
+  assert(nativeMd.includes('原生 Orchestrator 自主决定子代理模型'),nativeMd);
 });
 await test('disabled, child, Claude and Codex starts never run AGY probes',()=>{
   hook('session-start.mjs',base('off'),{PRO_MODE:'off'});
