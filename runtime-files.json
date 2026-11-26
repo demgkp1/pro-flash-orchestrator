@@ -24,7 +24,8 @@
       "sidecars/panel/main.mjs",
       "sidecars/panel/index.html",
       "sidecars/panel/style.css",
-      "sidecars/panel/app.js"
+      "sidecars/panel/app.js",
+      "sidecars/panel/i18n.js"
     ],
     "claude": ["hooks/claude-settings-hooks.json"],
     "codex": ["hooks/codex-hooks.json"]

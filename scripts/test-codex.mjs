@@ -394,7 +394,7 @@ await test('native list_agents aliases cannot bypass the main polling guard',()=
 });
 await test('both platform ZIPs use exact independent allowlists',()=>{
  const updaterFiles=['scripts/update.mjs','scripts/check-update-worker.mjs'];
- const panelFiles=['sidecar.json','main.mjs','index.html','style.css','app.js'].map(name=>'sidecars/panel/'+name);
+ const panelFiles=['sidecar.json','main.mjs','index.html','style.css','i18n.js','app.js'].map(name=>'sidecars/panel/'+name);
  const isSidecar=file=>file.split('/').includes('sidecars');
  const runtimeFiles=maintenance.codexRuntimeFiles().map(e=>e.to);
  for(const file of updaterFiles)assert(!runtimeFiles.includes(file),'Codex runtime must exclude '+file);

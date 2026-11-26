@@ -12,7 +12,7 @@ import { createReleaseZip, verifyZipLayout, resolveTag } from './package.mjs';
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'pfo-install-test-'));
 const target = path.join(TMP, 'pro-flash-orchestrator');
 const stateDir = path.join(target, '.state');
-const panelFiles = ['sidecar.json', 'main.mjs', 'index.html', 'style.css', 'app.js'].map(name => 'sidecars/panel/' + name);
+const panelFiles = ['sidecar.json', 'main.mjs', 'index.html', 'style.css', 'i18n.js', 'app.js'].map(name => 'sidecars/panel/' + name);
 fs.mkdirSync(stateDir, { recursive: true });
 const stateFiles = new Map([
   ['mode.json', '{"mode":"shadow"}\n'],

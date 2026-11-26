@@ -6,7 +6,7 @@
 
 ### 1. Release 用户免 Git 一键在线升级（推荐）
 
-v0.8.0 起，在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro + Flash · 编排设置** 中选择并保存一项统一的 Worker 档位（**Auto** 恢复默认），也可点击 **获取最新版本** 升级。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。面板未显示时，先启用插件及其 sidecar，再重载 App。
+v0.8.1 起，在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro-Flash Orchestrator** 面板（支持右上角 `中 / EN` 语言切换）中选择并保存一项统一的 Worker 档位（**Auto / 自动** 恢复默认），也可点击 **获取最新版本 / Check for updates** 升级。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。面板未显示时，先启用插件及其 sidecar，再重载 App。
 
 CLI 或旧版 Release 用户无需 Git，仍可运行安装目录中的更新脚本，在线拉取 GitHub Releases 最新精简包升级（保留 `.state/` 目录与用户配置）：
 

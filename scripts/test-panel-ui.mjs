@@ -29,7 +29,7 @@ try {
   host = await startPanel({ preview: false, uiToken: token, actions });
   preview = await startPanel({ preview: true, actions });
   const url = s => `http://127.0.0.1:${s.address().port}`;
-  const context = await browser.newContext({ colorScheme: 'dark', viewport: { width: 800, height: 760 } });
+  const context = await browser.newContext({ colorScheme: 'dark', locale: 'zh-CN', viewport: { width: 800, height: 760 } });
   const requests = [], errors = [], outside = [];
   await context.route('**/*', async route => {
     const u = new URL(route.request().url());
@@ -40,30 +40,36 @@ try {
   page.on('pageerror', e => errors.push(e.message));
   page.on('request', r => { if (new URL(r.url()).pathname.startsWith('/api/')) requests.push(r); });
   const $ = id => page.locator(`#${id}`), model = $('model'), policy = page.locator('details > summary');
+  const langBtn = lang => page.locator(`.lang-switch button[data-lang="${lang}"]`);
   const message = (id, text) => $(id).filter({ hasText: text }).waitFor();
   const dirty = () => message('save-state', '未保存');
   const mutations = () => requests.filter(r => r.method() === 'POST');
   await page.goto(`${url(host)}/?token=${token}`); await message('save-state', '已保存');
+  assert.equal(await page.title(), 'Pro-Flash Orchestrator');
+  assert.equal(await page.locator('h1').innerText(), 'Pro-Flash Orchestrator');
   assert.deepEqual(requests.map(r => [r.method(), new URL(r.url()).pathname]), [['GET', '/api/state']]);
   assert.equal(requests[0].headers()['x-sidecar-token'], token);
   const { csrfToken } = await (await requests[0].response()).json();
   assert.equal(await $('panel-version').innerText(), `v${currentVersion}`);
   assert.equal(await model.inputValue(), 'auto');
+  assert.equal(await $('auto-route-hint').isVisible(), true);
   pass('preload bridge precedes app; authenticated local state GET only');
 
   assert.equal(await page.locator('select, input, [role="combobox"], [role="tab"]').count(), 1);
   assert.deepEqual(await model.locator('option').evaluateAll(options => options.map(o => [o.value, o.label])), [
     ['auto', '自动（按路由策略）'], ['flash_lite', 'flash_lite: gemini 3.5 flash-lite'],
     ['flash', 'flash: gemini 4 hydrogen (high)'], ['pro', 'pro: gemini 4 hydrogen (xhigh)'],
-    ['inherit', 'inherit: master model'],
+    ['inherit', 'inherit: 继承主模型'],
   ]);
   assert.equal(await $('effort-value').innerText(), '跟随路由策略');
   for (const [value, effort] of [['flash_lite', '宿主默认'], ['flash', 'High'], ['inherit', '继承主模型'], ['pro', 'XHigh']]) {
     await model.selectOption(value); await dirty();
     assert.equal(await $('effort-value').innerText(), effort);
     assert.equal(await $('pro-guard').isVisible(), value === 'pro');
+    assert.equal(await $('auto-route-hint').isHidden(), true);
   }
   assert.match(await $('pro-guard').innerText(), /\[FORCE-PRO\]/);
+  assert.equal(await $('override-banner').isVisible(), true);
   assert.equal(await $('override-badge').isVisible(), true);
   await policy.click(); await message('override-note', '执行 flash_lite'); await policy.click();
   assert.equal(await $('update').isDisabled(), true);
@@ -85,11 +91,14 @@ try {
   const beforeReset = mutations().length;
   await $('reset').click(); await dirty(); assert.equal(mutations().length, beforeReset);
   assert.equal(await model.inputValue(), 'auto'); assert.equal(await $('pro-guard').isVisible(), true);
+  assert.equal(await $('auto-route-hint').isVisible(), true);
   await $('discard').click(); assert.equal(await model.inputValue(), 'pro');
   overrides = { research: null, self: null };
   await $('reset').click(); await $('save').click(); await message('settings-feedback', '已保存模型档位');
   assert.deepEqual(settings, { model: 'auto' });
-  assert.equal(await $('pro-guard').isHidden(), true); assert.equal(await $('override-badge').isHidden(), true);
+  assert.equal(await $('pro-guard').isHidden(), true);
+  assert.equal(await $('override-banner').isHidden(), true);
+  assert.equal(await $('override-badge').isHidden(), true);
   assert.equal(mutations().length, beforeReset + 1);
   pass('save failures keep drafts; reset and discard stay local; save sends only model and CSRF and refreshes overrides');
 
@@ -105,9 +114,57 @@ try {
   assert.equal(await $('update').isDisabled(), true); assert.equal(await model.isDisabled(), true);
   assert.deepEqual((await updateRequest).postDataJSON(), { csrfToken });
   releaseUpdate(); await $('reload').waitFor(); await message('install-version', `v${nextVersion}`);
+  assert.equal(await $('reload-lock-hint').isVisible(), true);
   assert.equal(await $('panel-version').innerText(), `v${currentVersion}`); // Open panel hasn't reloaded yet.
   await $('reload').click(); await message('panel-version', `v${nextVersion}`);
   pass('only explicit update POST; error/current/in-flight/success and real reload remain distinct');
+
+  await langBtn('en').click();
+  await message('save-state', 'Saved');
+  assert.equal(await page.title(), 'Pro-Flash Orchestrator');
+  assert.equal(await page.locator('h1').innerText(), 'Pro-Flash Orchestrator');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+  assert.equal(await langBtn('en').getAttribute('aria-pressed'), 'true');
+  assert.equal(await langBtn('zh-CN').getAttribute('aria-pressed'), 'false');
+  assert.equal(await $('route-title').innerText(), 'Subagent Routing');
+  assert.equal(await $('effort-value').innerText(), 'Follows routing policy');
+  assert.equal(await model.locator('option[value="inherit"]').evaluate(o => o.label), 'inherit: main model');
+  assert.equal(await page.evaluate(() => localStorage.getItem('pfo.panel.lang')), 'en');
+  await page.reload(); await message('save-state', 'Saved');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+  assert.equal(await $('route-title').innerText(), 'Subagent Routing');
+  await langBtn('zh-CN').click(); await message('save-state', '已保存');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'zh-CN');
+  assert.equal(await page.evaluate(() => localStorage.getItem('pfo.panel.lang')), 'zh-CN');
+  await page.goto(`${url(host)}/?token=${token}&lang=en`); await message('save-state', 'Saved');
+  assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
+  await page.goto(`${url(host)}/?token=${token}`); await message('save-state', '已保存');
+  pass('bilingual UI switching, query override and localStorage persistence');
+
+  await page.route('**/api/state', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      version: currentVersion,
+      settings: { model: 'auto' },
+      overrides: { research: null, self: null },
+      install: { kind: 'git', target: '/repo', version: currentVersion, canUpdate: false, reasonCode: 'GIT_CHECKOUT' },
+      runtime: { hasHydrogen: true, capabilitySource: 'cache', hydrogenId: null },
+      updateCheck: { latestVersion: '0.9.0', releaseUrl: 'https://github.com/example/repo/releases/tag/v0.9.0', checkedAt: '2026-11-26T00:00:00Z' },
+      csrfToken,
+    }),
+  }));
+  await page.reload(); await message('install-kind', 'Git 工作树');
+  await message('auto-route-hint', 'Hydrogen');
+  await message('latest-version', 'v0.9.0');
+  assert.equal(await $('latest-version-row').isVisible(), true);
+  assert.equal(await $('latest-release-link').getAttribute('href'), 'https://github.com/example/repo/releases/tag/v0.9.0');
+  await message('update-feedback', 'git pull');
+  await langBtn('en').click();
+  await message('update-feedback', 'Git worktrees cannot be updated');
+  await langBtn('zh-CN').click();
+  await page.unroute('**/api/state');
+  pass('runtime hydrogen hint, updateCheck latest release row and localized reasonCode');
 
   await page.route('**/api/state', route => route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ error: '<img onerror="bad()">本机未就绪' }) }));
   await page.reload(); await $('retry').waitFor(); await message('connection-text', '<img');

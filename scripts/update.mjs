@@ -103,48 +103,66 @@ function checkPlatform(target) {
     !CODEX_MARKERS.some(file => safePath(path.join(target, file))), 'Codex installations cannot use the AGY updater');
 }
 
+function failInstall(reasonCode, message) {
+  const error = new Error(message);
+  error.reasonCode = reasonCode;
+  throw error;
+}
+
+function checkInstall(condition, reasonCode, message) {
+  if (!condition) failInstall(reasonCode, message);
+}
+
 function inspectLaunchPath() {
   // Node normally realpaths ESM imports. The host's *lexical* entry point/root
   // can veto a linked installation, but neither may select a different target.
-  safePath(SELF);
+  try { safePath(SELF); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
   const main = process.argv[1];
   const panelEntry = path.join('sidecars', 'panel', 'main.mjs');
   const fromPanel = main && path.isAbsolute(main) && path.relative(PLUGIN_DIR, main) === panelEntry;
   if (main && path.isAbsolute(main) && main.endsWith(path.sep + panelEntry)) {
-    safePath(main);
-    check(fromPanel, 'Sidecar and updater belong to different installations');
+    try { safePath(main); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
+    checkInstall(fromPanel, 'UNSUPPORTED_LAYOUT', 'Sidecar and updater belong to different installations');
   } else if (main && path.isAbsolute(main) && fs.existsSync(main) && samePath(fs.realpathSync(main), SELF)) {
-    safePath(main);
+    try { safePath(main); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
   }
   const hostRoot = process.env.PLUGIN_ROOT;
   if (hostRoot) {
-    check(path.isAbsolute(hostRoot) && samePath(hostRoot, PLUGIN_DIR),
+    checkInstall(path.isAbsolute(hostRoot) && samePath(hostRoot, PLUGIN_DIR), 'UNSUPPORTED_LAYOUT',
       'Host plugin root does not match the running installation (possibly a symbolic link)');
-    safePath(hostRoot);
+    try { safePath(hostRoot); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
   }
   return Boolean(hostRoot || fromPanel);
 }
 
 export function inspectPanelInstall() {
-  const result = { kind: 'unsupported', target: PLUGIN_DIR, version: '', canUpdate: false };
+  const result = { kind: 'unsupported', target: PLUGIN_DIR, version: '', canUpdate: false, reasonCode: null };
   try {
     const verifiedLaunch = inspectLaunchPath();
     const manifest = path.join(PLUGIN_DIR, 'plugin.json');
-    check(safePath(manifest)?.isFile(), 'Missing plugin.json');
-    result.version = manifestVersion(readLocal(manifest, MAX_METADATA));
-    if (gitCheckout(PLUGIN_DIR)) return { ...result, kind: 'git', reason: 'Git checkout: update it with Git instead.' };
-    checkPlatform(PLUGIN_DIR);
-    check(path.basename(PLUGIN_DIR) === NAME && samePath(SELF, path.join(PLUGIN_DIR, 'scripts', 'update.mjs')),
-      'Installation directory or updater path does not match the plugin');
-    for (const rel of AGY_FILES) check(safePath(path.join(PLUGIN_DIR, rel))?.isFile(), `Incomplete AGY installation: ${rel}`);
+    let manifestStat;
+    try { manifestStat = safePath(manifest); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
+    checkInstall(manifestStat?.isFile(), 'MISSING_MANIFEST', 'Missing plugin.json');
+    let manifestBytes;
+    try { manifestBytes = readLocal(manifest, MAX_METADATA); } catch (error) { failInstall('READ_ERROR', error.message); }
+    try { result.version = manifestVersion(manifestBytes); } catch (error) { failInstall('READ_ERROR', error.message); }
+    if (gitCheckout(PLUGIN_DIR)) return { ...result, kind: 'git', reasonCode: 'GIT_CHECKOUT', reason: 'Git checkout: update it with Git instead.' };
+    try { checkPlatform(PLUGIN_DIR); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
+    checkInstall(path.basename(PLUGIN_DIR) === NAME && samePath(SELF, path.join(PLUGIN_DIR, 'scripts', 'update.mjs')),
+      'UNSUPPORTED_LAYOUT', 'Installation directory or updater path does not match the plugin');
+    for (const rel of AGY_FILES) {
+      let fileStat;
+      try { fileStat = safePath(path.join(PLUGIN_DIR, rel)); } catch (error) { failInstall('UNSUPPORTED_LAYOUT', error.message); }
+      checkInstall(fileStat?.isFile(), 'UNSUPPORTED_LAYOUT', `Incomplete AGY installation: ${rel}`);
+    }
     const kind = installKind(PLUGIN_DIR);
     // A bare import via a symlink has already lost its original spelling in
     // Node. Do not let it silently turn a global/workspace link into a custom target.
-    if (kind === 'custom' && !verifiedLaunch) return { ...result, kind, reason:
+    if (kind === 'custom' && !verifiedLaunch) return { ...result, kind, reasonCode: 'UNSUPPORTED_LAYOUT', reason:
       'Custom AGY install requires a matching host root or running panel entry point.' };
-    return { ...result, kind, canUpdate: true };
+    return { ...result, kind, canUpdate: true, reasonCode: null };
   } catch (error) {
-    return { ...result, reason: error.message };
+    return { ...result, reasonCode: error.reasonCode || 'READ_ERROR', reason: error.message };
   }
 }
 

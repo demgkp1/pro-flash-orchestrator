@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <title>Pro + Flash · 编排设置</title>
+  <title data-i18n="page.title">Pro-Flash Orchestrator</title>
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
@@ -26,48 +26,57 @@
           <g fill="#efa92b"><path d="m22 7 8 20-3.5-2.2L30.8 41l-6.9-19.5 2.7 1.7zM42 7l-8 20 3.5-2.2L33.2 41l6.9-19.5-2.7 1.7zM6.5 19l14.3 13.1-4-.4 7.1 12-12.7-16.2 4.1.5zM57.5 19 43.2 32.1l4-.4-7.1 12 12.7-16.2-4.1.5z"/></g>
           <circle cx="32" cy="48.4" r="6.2" fill="#f7edda"/><g fill="#e2d6bc"><circle cx="32" cy="7" r=".5"/><circle cx="29" cy="7" r=".27"/><circle cx="35" cy="7" r=".27"/></g>
         </svg>
-        <div class="identity"><p class="eyebrow">ANTIGRAVITY <span>/</span> 辅助面板</p><h1>Pro + Flash <span class="title-divider">·</span> 编排设置</h1></div>
-        <span class="version-badge" id="panel-version" aria-label="面板版本尚未读取">版本待查</span>
+        <div class="identity"><p class="eyebrow">ANTIGRAVITY <span>/</span> <span data-i18n="masthead.eyebrow">辅助面板</span></p><h1>Pro-Flash Orchestrator</h1></div>
+        <div class="masthead-meta">
+          <div class="lang-switch" role="group" aria-label="切换界面语言" data-i18n-aria-label="masthead.langGroup">
+            <button type="button" data-lang="zh-CN" aria-pressed="true">中</button>
+            <button type="button" data-lang="en" aria-pressed="false">EN</button>
+          </div>
+          <span class="version-badge" id="panel-version" aria-label="面板版本尚未读取">版本待查</span>
+        </div>
       </header>
 
-      <noscript><p class="notice">需要启用 JavaScript 才能连接本机插件；当前不能保存或更新。</p></noscript>
+      <noscript><p class="notice" data-i18n="noscript.notice">需要启用 JavaScript 才能连接本机插件；当前不能保存或更新。</p></noscript>
       <div class="connection" id="connection" role="status">
-        <span id="connection-text">正在读取本机设置与安装信息…</span><button class="button small" type="button" id="retry" hidden>重新连接</button>
+        <span id="connection-text" data-i18n="connection.loading">正在读取本机设置与安装信息…</span><button class="button small" type="button" id="retry" data-i18n="connection.retry" hidden>重新连接</button>
       </div>
       <section class="card" aria-labelledby="route-title">
         <div class="card-head">
           <span class="section-icon"><svg class="icon" aria-hidden="true"><use href="#i-route"/></svg></span>
-          <div class="head-copy"><h2 id="route-title">子代理路由</h2><p>主模型自动选择子代理类型，无需手选角色。</p></div>
-          <span class="state-pill" id="save-state">读取中</span>
+          <div class="head-copy"><h2 id="route-title" data-i18n="route.title">子代理路由</h2><p data-i18n="route.subtitle">主模型自动选择子代理类型，无需手选角色。</p></div>
+          <span class="state-pill" id="save-state" data-i18n="state.loading">读取中</span>
         </div>
         <div class="model-field">
-          <label for="model">统一模型档位</label>
+          <label for="model" data-i18n="model.label">统一模型档位</label>
           <div class="select-wrap">
             <select id="model" aria-describedby="model-effort model-note" disabled>
-              <option value="auto">自动（按路由策略）</option>
-              <option value="flash_lite">flash_lite: gemini 3.5 flash-lite</option>
-              <option value="flash">flash: gemini 4 hydrogen (high)</option>
-              <option value="pro">pro: gemini 4 hydrogen (xhigh)</option>
-              <option value="inherit">inherit: master model</option>
+              <option value="auto" data-i18n="model.option.auto">自动（按路由策略）</option>
+              <option value="flash_lite" data-i18n="model.option.flash_lite">flash_lite: gemini 3.5 flash-lite</option>
+              <option value="flash" data-i18n="model.option.flash">flash: gemini 4 hydrogen (high)</option>
+              <option value="pro" data-i18n="model.option.pro">pro: gemini 4 hydrogen (xhigh)</option>
+              <option value="inherit" data-i18n="model.option.inherit">inherit: 继承主模型</option>
             </select>
             <svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>
           </div>
         </div>
         <div class="model-meta">
-          <p id="model-effort">推理强度 <strong id="effort-value">待读取</strong></p>
-          <p id="model-note">实际模型与可用档位取决于账户权限和宿主版本。</p>
+          <p id="model-effort"><span data-i18n="model.effortLabel">推理强度</span> <strong id="effort-value" data-i18n="effort.pending">待读取</strong></p>
+          <p id="model-note" data-i18n="model.note">实际模型与可用档位取决于账户权限和宿主版本。</p>
         </div>
-        <p class="guard-note" id="pro-guard" hidden>使用 Pro / XHigh 需用户在本轮原话中写出 <code>[FORCE-PRO]</code>；未授权时按默认策略回退。</p>
+        <p class="route-hint" id="auto-route-hint" hidden></p>
+        <p class="guard-note" id="pro-guard" hidden><span data-i18n="guard.proPrefix">使用 Pro / XHigh 需用户在本轮原话中写出 </span><code>[FORCE-PRO]</code><span data-i18n="guard.proSuffix">；未授权时按默认策略回退。</span></p>
+        <p class="override-banner" id="override-banner" hidden></p>
         <details class="policy">
-          <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg>原生编排与环境变量 <span class="override-badge" id="override-badge" hidden>有覆盖</span></summary>
-          <p>原生 Orchestrator 自行派单，不使用面板档位。普通会话先使用角色环境变量（<code>PRO_RESEARCH_MODEL</code> / <code>PRO_SELF_MODEL</code>），再使用 <code>PRO_WORKER_MODEL</code>，然后才使用面板档位。选择自动时，有效的 <code>PRO_HYDROGEN_ID</code> 优先于默认策略。</p>
+          <summary><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg><span data-i18n="policy.summary">原生编排与环境变量</span> <span class="override-badge" id="override-badge" data-i18n="policy.overrideBadge" hidden>有覆盖</span></summary>
+          <p><span data-i18n="policy.part1">原生 Orchestrator 自行派单，不使用面板档位。普通会话先使用角色环境变量（</span><code>PRO_RESEARCH_MODEL</code> / <code>PRO_SELF_MODEL</code><span data-i18n="policy.part2">），再使用 </span><code>PRO_WORKER_MODEL</code><span data-i18n="policy.part3">，然后才使用面板档位。选择自动时，有效的 </span><code>PRO_HYDROGEN_ID</code><span data-i18n="policy.part4"> 优先于默认策略。</span></p>
           <p id="override-note" hidden></p>
         </details>
+        <p class="lock-hint" id="reload-lock-hint" hidden></p>
         <div class="card-foot">
-          <div class="settings-notes"><p class="feedback" id="settings-feedback" role="status">更改只在保存后生效。</p><button class="undo" type="button" id="discard" hidden>撤销未保存的更改</button></div>
+          <div class="settings-notes"><p class="feedback" id="settings-feedback" role="status" data-i18n="feedback.default">更改只在保存后生效。</p><button class="undo" type="button" id="discard" data-i18n="action.discard" hidden>撤销未保存的更改</button></div>
           <div class="actions">
-            <button class="button quiet" type="button" id="reset" title="保存后生效" disabled><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg>恢复自动</button>
-            <button class="button primary" type="button" id="save" disabled><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg><span id="save-label">保存设置</span></button>
+            <button class="button quiet" type="button" id="reset" title="保存后生效" data-i18n-title="action.resetTitle" disabled><svg class="icon" aria-hidden="true"><use href="#i-reset"/></svg><span data-i18n="action.reset">恢复自动</span></button>
+            <button class="button primary" type="button" id="save" disabled><svg class="icon" aria-hidden="true"><use href="#i-save"/></svg><span id="save-label" data-i18n="action.save">保存设置</span></button>
           </div>
         </div>
       </section>
@@ -75,21 +84,23 @@
       <section class="card release" aria-labelledby="release-title">
         <div class="card-head">
           <span class="section-icon"><svg class="icon" aria-hidden="true"><use href="#i-box"/></svg></span>
-          <div class="head-copy"><h2 id="release-title">插件版本</h2><p>仅更新下方识别到的安装副本。</p></div>
-          <span class="install-kind" id="install-kind">识别中</span>
+          <div class="head-copy"><h2 id="release-title" data-i18n="release.title">插件版本</h2><p data-i18n="release.subtitle">仅更新下方识别到的安装副本。</p></div>
+          <span class="install-kind" id="install-kind" data-i18n="installKind.detecting">识别中</span>
         </div>
         <dl class="install-info">
-          <div><dt>安装版本</dt><dd><code id="install-version">待读取</code></dd></div>
-          <div><dt>安装路径</dt><dd><code id="install-target" dir="auto">正在识别本机安装位置…</code></dd></div>
+          <div><dt data-i18n="install.versionLabel">安装版本</dt><dd><code id="install-version" data-i18n="install.versionPending">待读取</code></dd></div>
+          <div id="latest-version-row" hidden><dt data-i18n="install.latestLabel">最新版本</dt><dd><code id="latest-version"></code> <a class="release-link" id="latest-release-link" target="_blank" rel="noopener noreferrer" data-i18n="install.releaseLink" hidden>查看 Release</a></dd></div>
+          <div><dt data-i18n="install.targetLabel">安装路径</dt><dd><code id="install-target" dir="auto" data-i18n="install.targetDetecting">正在识别本机安装位置…</code></dd></div>
         </dl>
         <div class="card-foot">
-          <p class="feedback" id="update-feedback" role="status">点击后检查 GitHub Release，有新版时下载并替换。</p>
-          <div class="actions"><button class="button" type="button" id="update" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span id="update-label">获取最新版本</span></button><button class="button primary" type="button" id="reload" hidden>重新载入面板</button></div>
+          <p class="feedback" id="update-feedback" role="status" data-i18n="update.default">点击后检查 GitHub Release，有新版时下载并替换。</p>
+          <div class="actions"><button class="button" type="button" id="update" disabled><svg class="icon" aria-hidden="true"><use href="#i-download"/></svg><span id="update-label" data-i18n="action.update">获取最新版本</span></button><button class="button primary" type="button" id="reload" data-i18n="action.reload" hidden>重新载入面板</button></div>
         </div>
       </section>
     </main>
   </div>
   <script src="/preload.js"></script>
+  <script src="/i18n.js"></script>
   <script src="/app.js"></script>
 </body>
 </html>

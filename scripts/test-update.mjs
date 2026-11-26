@@ -279,7 +279,7 @@ try {
     const workspace = fixture(path.join(project, '.agents', 'plugins', NAME));
     fs.mkdirSync(path.join(project, '.git'));
     for (const [root, kind] of [[global, 'global'], [cliGlobal, 'global'], [workspace, 'workspace'], [custom, 'custom']]) {
-      assert.deepEqual(inspectInChild(root, home, root), { kind, target: root, version: '0.7.7', canUpdate: true });
+      assert.deepEqual(inspectInChild(root, home, root), { kind, target: root, version: '0.7.7', canUpdate: true, reasonCode: null });
     }
     assert.equal(inspectInChild(custom, home, workspace).canUpdate, false, 'host root is only a veto');
     const main = path.join(custom, 'sidecars', 'panel', 'main.mjs');

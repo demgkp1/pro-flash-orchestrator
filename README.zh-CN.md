@@ -5,7 +5,7 @@
 面向通用软件工程、代码审查、Bug 排查、重构与文档研读。通过确定性的物理 Hook 守门，让旗舰主模型（Pro）聚焦核心架构决策与标杆实现，并将多文件探路、外围扩写与单元测试分流给轻量助手（Flash / Hydrogen）。
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/Version-v0.8.0-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
+[![Version](https://img.shields.io/badge/Version-v0.8.1-blue.svg)](https://github.com/demgkp1/pro-flash-orchestrator)
 [![Platform](https://img.shields.io/badge/Platform-Antigravity%20%7C%20Codex%20%7C%20Claude%20Code-lightgrey.svg)](#多平台支持与验收状态)
 [![Tests (v0.7.6)](https://img.shields.io/badge/Doctor%20v0.7.6-117%2F117%20Passed-green.svg)](#诊断与测试)
 
@@ -59,9 +59,17 @@
 
 ---
 
+## v0.8.1 最新特性
+
+- **统一显示名称为 `Pro-Flash Orchestrator` 与零依赖中英双语面板**：将插件与可视化设置面板名称统一为 `Pro-Flash Orchestrator`，新增右上角 `中 / EN` 切换、自动语言检测（`?lang=` → `localStorage` → `navigator.language`）及本地持久化。
+- **修复 `/api/update` 请求超时与增强信息透明度**：将面板服务端 `requestTimeout` 从 15s 提升至 60s（大于 30s 下载超时）；外显自动路由下的 Hydrogen 探测状态、环境变量覆盖提醒及后台检测已知新版本与 Release 链接。
+- **极窄侧边栏（`< 400px`）响应式优化**：长安装路径单列堆叠防挤压，顶栏自适应换行。详见中英双语[发布说明](docs/releases/v0.8.1.md)。
+
+---
+
 ## v0.8.0 最新特性
 
-- **Antigravity 原生编排设置面板**：在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro + Flash · 编排设置** 中选择并保存一项统一的 Worker 档位（**Auto** 恢复默认）。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。已安装的 AGY 运行包可点 **获取最新版本** 升级。详见中英双语[发布说明](docs/releases/v0.8.0.md)。
+- **Antigravity 原生编排设置面板**：在 Antigravity App 打开 **Plugins → pro-flash-orchestrator**，在 **Pro-Flash Orchestrator** 面板中选择并保存一项统一的 Worker 档位（**Auto / 自动** 恢复默认）。主模型按任务决定 `research` 或 `self`，角色环境变量仍可覆盖统一档位。已安装的 AGY 运行包可点 **获取最新版本 / Check for updates** 升级。详见中英双语[发布说明](docs/releases/v0.8.0.md)。
 
 ---
 
@@ -123,10 +131,10 @@
 
 ## 快速安装与免 Git 升级
 
-v0.8.0 发布包：
+v0.8.1 发布包：
 
-- [pro-flash-orchestrator-antigravity-v0.8.0.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.0/pro-flash-orchestrator-antigravity-v0.8.0.zip)（根目录为 `pro-flash-orchestrator/`）
-- [pro-flash-orchestrator-codex-v0.8.0.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.0/pro-flash-orchestrator-codex-v0.8.0.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-antigravity-v0.8.1.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.1/pro-flash-orchestrator-antigravity-v0.8.1.zip)（根目录为 `pro-flash-orchestrator/`）
+- [pro-flash-orchestrator-codex-v0.8.1.zip](https://github.com/demgkp1/pro-flash-orchestrator/releases/download/v0.8.1/pro-flash-orchestrator-codex-v0.8.1.zip)（根目录为 `pro-flash-orchestrator-codex/`，独立插件位于 `plugins/pro-flash-orchestrator/`）
 
 ### 方式一：Release 用户免 Git 在线 / 离线升级
 
@@ -135,7 +143,7 @@ v0.8.0 发布包：
 node "<插件安装目录>/scripts/update.mjs"
 
 # 使用本地已下载的 ZIP 包离线升级
-node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.8.0.zip"
+node "<插件安装目录>/scripts/update.mjs" --zip "path/to/pro-flash-orchestrator-antigravity-v0.8.1.zip"
 
 # 预览变更但不写入磁盘
 node "<插件安装目录>/scripts/update.mjs" --dry-run
@@ -196,7 +204,7 @@ node scripts/install.mjs
 | 平台 | 当前状态 | 说明 |
 | :--- | :--- | :--- |
 | **Google Antigravity** | **主力完整支持** | 生产级生命周期 Hook 守门、AGY `v1.5.11+` 档位路由、Audit 动态切片配额与免 Git `update.mjs`。 |
-| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.8.0.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
+| **OpenAI Codex CLI** | **分阶段原生验收中** | 独立打包（`pro-flash-orchestrator-codex-v0.8.1.zip`）。六个用户级原生 Hook 已由用户审阅为 trusted 并观察到桌面端 `PreToolUse`，但完整原生守门覆盖与端到端原生助手派发闭环仍待验收，**不宣称已在 Codex 完整可用**。详见 [Codex 适配器验收证据](docs/codex-acceptance-v0.5.2.md)。 |
 | **Claude Code** | **仅提供配置模板** | 提供 `hooks/claude-settings-hooks.json` 钩子适配模板，尚未进行实机真实验证。 |
 
 ### Codex 独立 Marketplace 安装
@@ -207,7 +215,7 @@ node scripts/install.mjs
 node scripts/install.mjs --platform codex --git
 ```
 
-需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.8.0.zip` 并进入 Marketplace 根目录：
+需要显式本地回退时，解压 `pro-flash-orchestrator-codex-v0.8.1.zip` 并进入 Marketplace 根目录：
 
 ```bash
 node install.mjs --local
@@ -276,7 +284,7 @@ pro-flash-orchestrator/
 ├── docs/                          # INSTALL 模板、审计记录与 Codex 验收证据
 ├── hooks/                         # Claude Code 与 Codex CLI 钩子适配配置
 ├── hooks.json                     # Antigravity 生命周期钩子路由
-├── plugin.json                    # Antigravity 插件清单 (v0.8.0)
+├── plugin.json                    # Antigravity 插件清单 (v0.8.1)
 ├── rules/AGENTS.md                # 常驻架构师与助手规范（根目录 AGENTS.md 为其镜像）
 ├── runtime-files.json             # 运行时分发白名单
 ├── skills/flash-dev/SKILL.md      # /flash-dev 工作流技能（根目录 SKILL.md 为其镜像）
