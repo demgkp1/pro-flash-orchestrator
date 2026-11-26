@@ -143,7 +143,7 @@ function decide() {
   if ((info.bytes || 0) > HARD_MAX_BYTES && !hasSlice) {
     return finish({
       deny: true,
-      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 ${researcher} 抽样，或明确传入 StartLine/EndLine。`,
+      reason: `【读取守门】该文件 ${(info.bytes / 1024 / 1024).toFixed(1)} MB，禁止整文件读入。请派 invoke_subagent(TypeName="research", Model="${researcher}") 抽样，或明确传入 StartLine/EndLine。`,
     });
   }
 

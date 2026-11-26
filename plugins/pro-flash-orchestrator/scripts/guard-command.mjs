@@ -465,7 +465,7 @@ function decide() {
         if (dumpedBytes > DUMP_BYTES) {
           return deny(
             'dump',
-            `【命令守门】\`${dump.reader}\` 会把至少 ${(dumpedBytes / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派 flash 提取要点。`,
+            `【命令守门】\`${dump.reader}\` 会把至少 ${(dumpedBytes / 1024).toFixed(0)} KB 内容灌进上下文。请改用 \`Get-Content -TotalCount 80\` / \`head -n 80\`，或派轻量调研代理提取要点。`,
           );
         }
       } catch {
