@@ -439,7 +439,10 @@ export function targetWorkerModel(harness = HARNESS, taskType = '', payload = CT
     if (validHydrogenEnv) return validHydrogenEnv;
     // The host currently accepts only inherit/flash_lite/flash/pro. Hydrogen
     // main sessions must inherit to avoid silently running a Gemini 3.8 worker.
-    if (modelNames(payload).some((name) => /hydrogen/i.test(name))) return 'inherit';
+    // In AGY 2.35.2, Neon main sessions also fail model identifier resolution
+    // when using the "flash" alias, so they must use "inherit" unless an
+    // explicit valid enum env var (e.g. PRO_WORKER_MODEL) is set above.
+    if (modelNames(payload).some((name) => /hydrogen|neon/i.test(name))) return 'inherit';
     return 'flash';
   }
   if (envCandidate) return envCandidate;
